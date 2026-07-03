@@ -166,3 +166,22 @@ func TestEnvOverride(t *testing.T) {
 		t.Errorf("env override not applied, got %q", cfg.Database.URL)
 	}
 }
+
+func TestEnvOnlyDatabaseURL(t *testing.T) {
+	// The env var must work even when the config file has NO database
+	// section at all — viper only surfaces env overrides for known keys,
+	// so database.url needs a registered default.
+	t.Setenv("MLSGRID_DATABASE_URL", "postgres://envonly/db")
+	cfg, err := Load(writeConfig(t, `
+profiles:
+  mred:
+    originating_system: mred
+    token_env: T
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.URL != "postgres://envonly/db" {
+		t.Errorf("env-only database.url not applied, got %q", cfg.Database.URL)
+	}
+}

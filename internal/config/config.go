@@ -100,6 +100,11 @@ const (
 )
 
 func setDefaults(v *viper.Viper) {
+	// database.url defaults empty but must be registered: viper's
+	// AutomaticEnv only surfaces env overrides for keys it already knows,
+	// so without this MLSGRID_DATABASE_URL is ignored when the config file
+	// has no database section.
+	v.SetDefault("database.url", "")
 	v.SetDefault("database.schema", "mlsgrid")
 	v.SetDefault("sync.interval", "5m")
 	v.SetDefault("sync.reconcile_every", "24h")
