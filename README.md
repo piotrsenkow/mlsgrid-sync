@@ -1,8 +1,14 @@
 # mlsgrid-sync
 
+[![CI](https://github.com/piotrsenkow/mlsgrid-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/piotrsenkow/mlsgrid-sync/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/piotrsenkow/mlsgrid-sync)](https://github.com/piotrsenkow/mlsgrid-sync/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/piotrsenkow/mlsgrid-sync)](https://goreportcard.com/report/github.com/piotrsenkow/mlsgrid-sync)
+[![Go Reference](https://pkg.go.dev/badge/github.com/piotrsenkow/mlsgrid-sync.svg)](https://pkg.go.dev/github.com/piotrsenkow/mlsgrid-sync)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 Replicate [MLS Grid](https://www.mlsgrid.com) listing feeds into PostgreSQL — correctly, resumably, and inside the rate limits.
 
-> **Status: pre-release.** The schema contract and CLI skeleton are in place; the sync engine is being built milestone-by-milestone ([roadmap](docs/ROADMAP.md)). Not yet usable for production replication.
+> **Status: v0.1.** The full replication lifecycle — backfill, incremental sync, reconcile, media download, field scopes — is implemented, tested against synthetic fixtures, and validated against a live MRED feed. Pre-1.0 caveats: the schema contract is stable (v1.0.0), but CLI flags and config keys may still shift ([roadmap](docs/ROADMAP.md)).
 
 `mlsgrid-sync` is a single Go binary that performs the full MLS Grid replication lifecycle against the RESO Web API (OData):
 
@@ -24,15 +30,29 @@ The database schema is a versioned, documented contract — see [docs/schema-con
 
 The tool automatically enforces what it can: it deletes revoked records (`MlgCanView=false`) as the license requires, runs below the published rate limits (and refuses config that exceeds them), backs off on HTTP 429, and sends the required `User-Agent` token header on media downloads. Details in [docs/compliance.md](docs/compliance.md).
 
-## Quickstart (will stabilize at v0.1.0)
+## Quickstart
+
+With Docker (bundles PostgreSQL):
+
+```sh
+cp config.example.yaml mlsgrid-sync.yaml   # edit: your feed's system slug
+export MLSGRID_TOKEN_MRED=...              # your MLS Grid bearer token
+docker compose run --rm sync init-db       # create schema + run migrations
+docker compose run --rm sync backfill      # initial import (resumable)
+docker compose up -d sync                  # continuous replication
+```
+
+Or against your own PostgreSQL — install a [release binary](https://github.com/piotrsenkow/mlsgrid-sync/releases) or `go install github.com/piotrsenkow/mlsgrid-sync/cmd/mlsgrid-sync@latest`:
 
 ```sh
 cp config.example.yaml mlsgrid-sync.yaml   # edit: your feed's system slug + token env var
-cp .env.example .env                       # edit: database URL + bearer token
-mlsgrid-sync init-db                       # create schema + run migrations
-mlsgrid-sync backfill                      # initial import (resumable)
-mlsgrid-sync sync --daemon                 # continuous replication
+export MLSGRID_DATABASE_URL=postgres://... # or database.url in the config
+mlsgrid-sync init-db
+mlsgrid-sync backfill
+mlsgrid-sync sync --daemon                 # deploy/mlsgrid-sync.service for systemd
 ```
+
+Trying it out on a token you also use elsewhere? Bound the trial: `backfill --since 24h --max-pages 5` imports a day's slice in a handful of requests, and incremental sync takes over from there.
 
 ## Commands
 
@@ -74,7 +94,9 @@ Rules the downloader enforces for you:
 
 ## Design notes
 
-Built from production experience running MLS Grid replication at scale (MRED / Chicagoland). The design decisions that matter — a dedicated `sync_state` cursor table that refuses to run with an empty watermark, `ge` cursor semantics with idempotent upserts, wall-clock-aligned persisted rate budgets, a circuit breaker on repeated 429s, MediaKey-immutability-based dedup — are documented in [docs/architecture.md](docs/architecture.md) (forthcoming) and encoded as test fixtures.
+Built from production experience running MLS Grid replication at scale (MRED / Chicagoland). The design decisions that matter — a dedicated `sync_state` cursor table that refuses to run with an empty watermark, `ge` cursor semantics with idempotent upserts, wall-clock-aligned persisted rate budgets, a circuit breaker on repeated 429s, MediaKey-immutability-based dedup — are documented in [docs/architecture.md](docs/architecture.md) (including an appendix of the production incidents this design encodes) and enforced by test fixtures.
+
+Found a feed quirk this tool mishandles? Open an [MLS quirk report](https://github.com/piotrsenkow/mlsgrid-sync/issues/new?template=mls_quirk_report.yml) — that's how alias maps and unmarshalers grow beyond MRED.
 
 ## License
 

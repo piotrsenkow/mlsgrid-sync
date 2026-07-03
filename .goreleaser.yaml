@@ -1,0 +1,39 @@
+version: 2
+
+project_name: mlsgrid-sync
+
+builds:
+  - main: ./cmd/mlsgrid-sync
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/piotrsenkow/mlsgrid-sync/internal/cli.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - config.example.yaml
+      - docs/*
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native
+
+release:
+  footer: |
+    ---
+    **Compliance reminder:** using this tool requires an executed MLS Grid
+    Data License Agreement and per-MLS approval. See docs/compliance.md.

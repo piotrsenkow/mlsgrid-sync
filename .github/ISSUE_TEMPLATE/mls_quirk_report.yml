@@ -1,0 +1,37 @@
+name: MLS quirk report
+description: Your MLS's feed does something this tool doesn't handle — an odd field type, a renamed field, a local alias worth a builtin map.
+labels: [mls-quirk]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feed quirks are expected — every MLS has some. Reports like this are
+        how alias maps and unmarshalers grow. **Redact anything that could
+        identify a real listing or person**: keys, addresses, agent names.
+  - type: input
+    id: system
+    attributes:
+      label: Originating system
+      description: The OriginatingSystemName slug (e.g. mred)
+    validations:
+      required: true
+  - type: input
+    id: field
+    attributes:
+      label: Field(s) involved
+      placeholder: e.g. XX_CLOSE_DT, or "CloseDate arrives as MM/DD/YYYY"
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Redacted sample payload
+      description: The smallest JSON snippet that shows the quirk, with identifying values replaced.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen
+      description: e.g. "XX_CLOSE_DT is this MLS's legacy spelling of CloseDate and should feed the close_date column" — a proposed aliases.yaml entry is perfect.

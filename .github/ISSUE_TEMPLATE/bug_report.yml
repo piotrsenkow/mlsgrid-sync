@@ -1,0 +1,29 @@
+name: Bug report
+description: Something misbehaves — a crash, wrong data, a stuck sync.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got. Include log lines if you have them — but redact tokens and database URLs.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `mlsgrid-sync version`
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Originating system
+      description: Which MLS feed (e.g. mred), if relevant
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: The profile/sync/ratelimit sections involved. Tokens live in env vars, so config should be safe to paste — double-check anyway.
+      render: yaml

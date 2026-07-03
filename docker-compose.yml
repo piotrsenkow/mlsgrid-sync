@@ -1,0 +1,43 @@
+# Quickstart stack: PostgreSQL + mlsgrid-sync.
+#
+#   cp config.example.yaml mlsgrid-sync.yaml   # set your system slug
+#   export MLSGRID_TOKEN_MRED=...              # your MLS Grid bearer token
+#   docker compose run --rm sync init-db
+#   docker compose run --rm sync backfill
+#   docker compose up -d sync                  # continuous replication
+#
+# The Postgres data directory persists in the `mlsgrid-pgdata` volume; your
+# replica survives `docker compose down`.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: mlsgrid
+      POSTGRES_USER: mlsgrid
+      # Local-only default — change it (or switch to secrets) before
+      # exposing the port beyond this compose network.
+      POSTGRES_PASSWORD: mlsgrid
+    volumes:
+      - mlsgrid-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlsgrid"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  sync:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MLSGRID_DATABASE_URL: postgres://mlsgrid:mlsgrid@postgres:5432/mlsgrid?sslmode=disable
+      # Pass your token through from the host; never write it into files.
+      MLSGRID_TOKEN_MRED: ${MLSGRID_TOKEN_MRED:-}
+    volumes:
+      - ./mlsgrid-sync.yaml:/etc/mlsgrid-sync/config.yaml:ro
+    command: ["--config", "/etc/mlsgrid-sync/config.yaml", "sync", "--daemon"]
+
+volumes:
+  mlsgrid-pgdata:
