@@ -5,6 +5,8 @@ import (
 	"runtime/debug"
 
 	"github.com/spf13/cobra"
+
+	"github.com/piotrsenkow/mlsgrid-sync/internal/store/postgres"
 )
 
 // version is set via -ldflags "-X ...cli.version=v0.1.0" by goreleaser;
@@ -14,8 +16,24 @@ var version = "dev"
 var initDBCmd = &cobra.Command{
 	Use:   "init-db",
 	Short: "Create the mlsgrid schema and run migrations",
+	Long: `Connects to database.url (or MLSGRID_DATABASE_URL), creates the configured
+schema if needed, and applies pending migrations. Idempotent — safe to re-run.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return notImplemented("M3")
+		ctx := cmd.Context()
+		st, err := postgres.New(ctx, cfg.Database.URL, postgres.Options{Schema: cfg.Database.Schema})
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		if err := st.Migrate(ctx); err != nil {
+			return err
+		}
+		version, err := st.ContractVersion(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("schema %q is up to date (contract version %s)\n", cfg.Database.Schema, version)
+		return nil
 	},
 }
 

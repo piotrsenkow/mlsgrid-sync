@@ -1,0 +1,177 @@
+COLUMN listing_event.id bigint(int8) nullable=NO default= identity=YES
+COLUMN listing_event.listing_key text(text) nullable=NO default= identity=NO
+COLUMN listing_event.event_type text(text) nullable=NO default= identity=NO
+COLUMN listing_event.old_value text(text) nullable=YES default= identity=NO
+COLUMN listing_event.new_value text(text) nullable=YES default= identity=NO
+COLUMN listing_event.observed_at timestamp with time zone(timestamptz) nullable=NO default=now() identity=NO
+COLUMN listing_event.source_modification_timestamp timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN media.media_key text(text) nullable=NO default= identity=NO
+COLUMN media.listing_key text(text) nullable=NO default= identity=NO
+COLUMN media.media_url text(text) nullable=YES default= identity=NO
+COLUMN media.display_order integer(int4) nullable=YES default= identity=NO
+COLUMN media.caption text(text) nullable=YES default= identity=NO
+COLUMN media.image_width integer(int4) nullable=YES default= identity=NO
+COLUMN media.image_height integer(int4) nullable=YES default= identity=NO
+COLUMN media.permission ARRAY(_text) nullable=YES default= identity=NO
+COLUMN media.media_modification_timestamp timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN media.storage_status text(text) nullable=NO default= identity=NO
+COLUMN media.local_path text(text) nullable=YES default= identity=NO
+COLUMN media.content_type text(text) nullable=YES default= identity=NO
+COLUMN media.bytes bigint(int8) nullable=YES default= identity=NO
+COLUMN media.failure_count integer(int4) nullable=NO default=0 identity=NO
+COLUMN media.updated_at timestamp with time zone(timestamptz) nullable=NO default=now() identity=NO
+COLUMN open_house.open_house_key text(text) nullable=NO default= identity=NO
+COLUMN open_house.listing_key text(text) nullable=YES default= identity=NO
+COLUMN open_house.listing_id text(text) nullable=YES default= identity=NO
+COLUMN open_house.open_house_date date(date) nullable=YES default= identity=NO
+COLUMN open_house.start_time timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN open_house.end_time timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN open_house.remarks text(text) nullable=YES default= identity=NO
+COLUMN open_house.modification_timestamp timestamp with time zone(timestamptz) nullable=NO default= identity=NO
+COLUMN open_house.raw jsonb(jsonb) nullable=YES default= identity=NO
+COLUMN open_house.updated_at timestamp with time zone(timestamptz) nullable=NO default=now() identity=NO
+COLUMN property.listing_key text(text) nullable=NO default= identity=NO
+COLUMN property.listing_id text(text) nullable=NO default= identity=NO
+COLUMN property.originating_system_name text(text) nullable=NO default= identity=NO
+COLUMN property.standard_status text(text) nullable=YES default= identity=NO
+COLUMN property.mls_status text(text) nullable=YES default= identity=NO
+COLUMN property.property_type text(text) nullable=YES default= identity=NO
+COLUMN property.property_sub_type text(text) nullable=YES default= identity=NO
+COLUMN property.list_price numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.original_list_price numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.previous_list_price numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.close_price numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.listing_contract_date date(date) nullable=YES default= identity=NO
+COLUMN property.purchase_contract_date date(date) nullable=YES default= identity=NO
+COLUMN property.close_date date(date) nullable=YES default= identity=NO
+COLUMN property.off_market_date date(date) nullable=YES default= identity=NO
+COLUMN property.days_on_market integer(int4) nullable=YES default= identity=NO
+COLUMN property.cumulative_days_on_market integer(int4) nullable=YES default= identity=NO
+COLUMN property.street_number text(text) nullable=YES default= identity=NO
+COLUMN property.street_dir_prefix text(text) nullable=YES default= identity=NO
+COLUMN property.street_name text(text) nullable=YES default= identity=NO
+COLUMN property.street_suffix text(text) nullable=YES default= identity=NO
+COLUMN property.unit_number text(text) nullable=YES default= identity=NO
+COLUMN property.city text(text) nullable=YES default= identity=NO
+COLUMN property.postal_code text(text) nullable=YES default= identity=NO
+COLUMN property.county_or_parish text(text) nullable=YES default= identity=NO
+COLUMN property.state_or_province text(text) nullable=YES default= identity=NO
+COLUMN property.township text(text) nullable=YES default= identity=NO
+COLUMN property.subdivision_name text(text) nullable=YES default= identity=NO
+COLUMN property.latitude double precision(float8) nullable=YES default= identity=NO
+COLUMN property.longitude double precision(float8) nullable=YES default= identity=NO
+COLUMN property.bedrooms_total integer(int4) nullable=YES default= identity=NO
+COLUMN property.bathrooms_full integer(int4) nullable=YES default= identity=NO
+COLUMN property.bathrooms_half integer(int4) nullable=YES default= identity=NO
+COLUMN property.rooms_total integer(int4) nullable=YES default= identity=NO
+COLUMN property.living_area numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.building_area_total numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.lot_size_acres numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.lot_size_square_feet numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.year_built integer(int4) nullable=YES default= identity=NO
+COLUMN property.stories_total numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.garage_spaces numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.parking_total integer(int4) nullable=YES default= identity=NO
+COLUMN property.number_of_units_total integer(int4) nullable=YES default= identity=NO
+COLUMN property.new_construction_yn boolean(bool) nullable=YES default= identity=NO
+COLUMN property.property_attached_yn boolean(bool) nullable=YES default= identity=NO
+COLUMN property.waterfront_yn boolean(bool) nullable=YES default= identity=NO
+COLUMN property.public_remarks text(text) nullable=YES default= identity=NO
+COLUMN property.virtual_tour_url text(text) nullable=YES default= identity=NO
+COLUMN property.internet_address_display_yn boolean(bool) nullable=YES default= identity=NO
+COLUMN property.internet_entire_listing_display_yn boolean(bool) nullable=YES default= identity=NO
+COLUMN property.elementary_school text(text) nullable=YES default= identity=NO
+COLUMN property.middle_or_junior_school text(text) nullable=YES default= identity=NO
+COLUMN property.high_school text(text) nullable=YES default= identity=NO
+COLUMN property.elementary_school_district text(text) nullable=YES default= identity=NO
+COLUMN property.middle_or_junior_school_district text(text) nullable=YES default= identity=NO
+COLUMN property.high_school_district text(text) nullable=YES default= identity=NO
+COLUMN property.list_agent_full_name text(text) nullable=YES default= identity=NO
+COLUMN property.list_agent_mls_id text(text) nullable=YES default= identity=NO
+COLUMN property.list_agent_key text(text) nullable=YES default= identity=NO
+COLUMN property.list_office_name text(text) nullable=YES default= identity=NO
+COLUMN property.list_office_mls_id text(text) nullable=YES default= identity=NO
+COLUMN property.buyer_agent_full_name text(text) nullable=YES default= identity=NO
+COLUMN property.buyer_agent_mls_id text(text) nullable=YES default= identity=NO
+COLUMN property.buyer_office_name text(text) nullable=YES default= identity=NO
+COLUMN property.tax_annual_amount numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.tax_year integer(int4) nullable=YES default= identity=NO
+COLUMN property.association_fee numeric(numeric) nullable=YES default= identity=NO
+COLUMN property.association_fee_frequency text(text) nullable=YES default= identity=NO
+COLUMN property.parcel_number text(text) nullable=YES default= identity=NO
+COLUMN property.modification_timestamp timestamp with time zone(timestamptz) nullable=NO default= identity=NO
+COLUMN property.original_entry_timestamp timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN property.status_change_timestamp timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN property.photos_change_timestamp timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN property.photos_count integer(int4) nullable=YES default= identity=NO
+COLUMN property.mlg_can_use ARRAY(_text) nullable=YES default= identity=NO
+COLUMN property.raw jsonb(jsonb) nullable=YES default= identity=NO
+COLUMN property.first_seen_at timestamp with time zone(timestamptz) nullable=NO default=now() identity=NO
+COLUMN property.updated_at timestamp with time zone(timestamptz) nullable=NO default=now() identity=NO
+COLUMN rate_budget.window_kind text(text) nullable=NO default= identity=NO
+COLUMN rate_budget.window_start timestamp with time zone(timestamptz) nullable=NO default= identity=NO
+COLUMN rate_budget.requests integer(int4) nullable=NO default=0 identity=NO
+COLUMN rate_budget.bytes_downloaded bigint(int8) nullable=NO default=0 identity=NO
+COLUMN rate_budget.updated_at timestamp with time zone(timestamptz) nullable=NO default=now() identity=NO
+COLUMN room.listing_key text(text) nullable=NO default= identity=NO
+COLUMN room.room_key text(text) nullable=NO default= identity=NO
+COLUMN room.room_type text(text) nullable=YES default= identity=NO
+COLUMN room.room_level text(text) nullable=YES default= identity=NO
+COLUMN room.room_dimensions text(text) nullable=YES default= identity=NO
+COLUMN room.raw jsonb(jsonb) nullable=YES default= identity=NO
+COLUMN schema_meta.key text(text) nullable=NO default= identity=NO
+COLUMN schema_meta.value text(text) nullable=YES default= identity=NO
+COLUMN schema_meta.updated_at timestamp with time zone(timestamptz) nullable=NO default=now() identity=NO
+COLUMN sync_state.resource text(text) nullable=NO default= identity=NO
+COLUMN sync_state.originating_system text(text) nullable=NO default= identity=NO
+COLUMN sync_state.last_modification_ts timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN sync_state.in_progress_url text(text) nullable=YES default= identity=NO
+COLUMN sync_state.backfill_completed_at timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN sync_state.last_full_reconcile_at timestamp with time zone(timestamptz) nullable=YES default= identity=NO
+COLUMN sync_state.updated_at timestamp with time zone(timestamptz) nullable=NO default=now() identity=NO
+COLUMN unit_type.listing_key text(text) nullable=NO default= identity=NO
+COLUMN unit_type.unit_type_key text(text) nullable=NO default= identity=NO
+COLUMN unit_type.unit_number text(text) nullable=YES default= identity=NO
+COLUMN unit_type.floor_number text(text) nullable=YES default= identity=NO
+COLUMN unit_type.beds_total integer(int4) nullable=YES default= identity=NO
+COLUMN unit_type.baths_total integer(int4) nullable=YES default= identity=NO
+COLUMN unit_type.actual_rent numeric(numeric) nullable=YES default= identity=NO
+COLUMN unit_type.raw jsonb(jsonb) nullable=YES default= identity=NO
+CONSTRAINT listing_event listing_event_event_type_check: CHECK ((event_type = ANY (ARRAY['new_listing'::text, 'price_change'::text, 'status_change'::text, 'back_on_market'::text, 'delisted'::text])))
+CONSTRAINT listing_event listing_event_pkey: PRIMARY KEY (id)
+CONSTRAINT media media_listing_key_fkey: FOREIGN KEY (listing_key) REFERENCES <schema>.property(listing_key) ON DELETE CASCADE
+CONSTRAINT media media_pkey: PRIMARY KEY (media_key)
+CONSTRAINT media media_storage_status_check: CHECK ((storage_status = ANY (ARRAY['pending'::text, 'downloaded'::text, 'failed'::text, 'skipped'::text])))
+CONSTRAINT open_house open_house_pkey: PRIMARY KEY (open_house_key)
+CONSTRAINT property property_pkey: PRIMARY KEY (listing_key)
+CONSTRAINT rate_budget rate_budget_pkey: PRIMARY KEY (window_kind, window_start)
+CONSTRAINT rate_budget rate_budget_window_kind_check: CHECK ((window_kind = ANY (ARRAY['hour'::text, 'day'::text])))
+CONSTRAINT room room_listing_key_fkey: FOREIGN KEY (listing_key) REFERENCES <schema>.property(listing_key) ON DELETE CASCADE
+CONSTRAINT room room_pkey: PRIMARY KEY (listing_key, room_key)
+CONSTRAINT schema_meta schema_meta_pkey: PRIMARY KEY (key)
+CONSTRAINT sync_state sync_state_pkey: PRIMARY KEY (resource, originating_system)
+CONSTRAINT unit_type unit_type_listing_key_fkey: FOREIGN KEY (listing_key) REFERENCES <schema>.property(listing_key) ON DELETE CASCADE
+CONSTRAINT unit_type unit_type_pkey: PRIMARY KEY (listing_key, unit_type_key)
+INDEX listing_event listing_event_key_observed_idx: CREATE INDEX listing_event_key_observed_idx ON <schema>.listing_event USING btree (listing_key, observed_at)
+INDEX listing_event listing_event_pkey: CREATE UNIQUE INDEX listing_event_pkey ON <schema>.listing_event USING btree (id)
+INDEX media media_listing_key_idx: CREATE INDEX media_listing_key_idx ON <schema>.media USING btree (listing_key)
+INDEX media media_pending_idx: CREATE INDEX media_pending_idx ON <schema>.media USING btree (storage_status) WHERE (storage_status = 'pending'::text)
+INDEX media media_pkey: CREATE UNIQUE INDEX media_pkey ON <schema>.media USING btree (media_key)
+INDEX open_house open_house_date_idx: CREATE INDEX open_house_date_idx ON <schema>.open_house USING btree (open_house_date)
+INDEX open_house open_house_listing_key_idx: CREATE INDEX open_house_listing_key_idx ON <schema>.open_house USING btree (listing_key)
+INDEX open_house open_house_pkey: CREATE UNIQUE INDEX open_house_pkey ON <schema>.open_house USING btree (open_house_key)
+INDEX property property_close_date_closed_idx: CREATE INDEX property_close_date_closed_idx ON <schema>.property USING btree (close_date) WHERE (standard_status = 'Closed'::text)
+INDEX property property_lat_lng_idx: CREATE INDEX property_lat_lng_idx ON <schema>.property USING btree (latitude, longitude)
+INDEX property property_list_price_idx: CREATE INDEX property_list_price_idx ON <schema>.property USING btree (list_price)
+INDEX property property_listing_id_idx: CREATE INDEX property_listing_id_idx ON <schema>.property USING btree (listing_id)
+INDEX property property_modification_timestamp_idx: CREATE INDEX property_modification_timestamp_idx ON <schema>.property USING btree (modification_timestamp)
+INDEX property property_pkey: CREATE UNIQUE INDEX property_pkey ON <schema>.property USING btree (listing_key)
+INDEX property property_postal_code_idx: CREATE INDEX property_postal_code_idx ON <schema>.property USING btree (postal_code)
+INDEX property property_raw_idx: CREATE INDEX property_raw_idx ON <schema>.property USING gin (raw)
+INDEX property property_standard_status_idx: CREATE INDEX property_standard_status_idx ON <schema>.property USING btree (standard_status)
+INDEX property property_type_city_idx: CREATE INDEX property_type_city_idx ON <schema>.property USING btree (property_type, city)
+INDEX rate_budget rate_budget_pkey: CREATE UNIQUE INDEX rate_budget_pkey ON <schema>.rate_budget USING btree (window_kind, window_start)
+INDEX room room_pkey: CREATE UNIQUE INDEX room_pkey ON <schema>.room USING btree (listing_key, room_key)
+INDEX schema_meta schema_meta_pkey: CREATE UNIQUE INDEX schema_meta_pkey ON <schema>.schema_meta USING btree (key)
+INDEX sync_state sync_state_pkey: CREATE UNIQUE INDEX sync_state_pkey ON <schema>.sync_state USING btree (resource, originating_system)
+INDEX unit_type unit_type_pkey: CREATE UNIQUE INDEX unit_type_pkey ON <schema>.unit_type USING btree (listing_key, unit_type_key)
