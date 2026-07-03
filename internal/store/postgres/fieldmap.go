@@ -154,6 +154,30 @@ var propertyCols = []col{
 	{"mlg_can_use", "MlgCanUse", kTextArray},
 }
 
+// CorePropertyFields returns the feed fields backing the core property
+// columns plus the replication-required fields, including legacy alias
+// spellings — the $select list under which core columns still populate
+// fully. Used by the minimal field scope, whose raw is NULL anyway, to stop
+// paying for the long tail against the hourly byte budget.
+func CorePropertyFields(aliases *fieldscope.AliasMap) []string {
+	seen := make(map[string]bool)
+	var fields []string
+	add := func(base string) {
+		for _, name := range aliases.Candidates(base) {
+			if !seen[name] {
+				seen[name] = true
+				fields = append(fields, name)
+			}
+		}
+	}
+	add("ListingKey")
+	add("MlgCanView")
+	for _, c := range propertyCols {
+		add(c.source)
+	}
+	return fields
+}
+
 var roomCols = []col{
 	{"room_type", "RoomType", kText},
 	{"room_level", "RoomLevel", kText},

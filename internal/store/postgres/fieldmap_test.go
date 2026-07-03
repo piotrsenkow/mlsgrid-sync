@@ -123,3 +123,37 @@ func TestGeneratedSQLPlaceholderCounts(t *testing.T) {
 		}
 	}
 }
+
+func TestCorePropertyFields(t *testing.T) {
+	plain := CorePropertyFields(nil)
+	seen := map[string]bool{}
+	for _, f := range plain {
+		if seen[f] {
+			t.Errorf("duplicate field %s", f)
+		}
+		seen[f] = true
+	}
+	// Replication needs the key, the revocation flag, the cursor field, and
+	// the two event-capture fields at minimum.
+	for _, required := range []string{"ListingKey", "MlgCanView", "ModificationTimestamp", "ListPrice", "StandardStatus", "ListingId", "OriginatingSystemName"} {
+		if !seen[required] {
+			t.Errorf("core $select list must include %s", required)
+		}
+	}
+
+	// With an alias map, legacy spellings ride along so historical records
+	// still populate their core columns under $select.
+	mred, err := fieldscope.Builtin("mred")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range CorePropertyFields(mred) {
+		if f == "MRD_RENTAL_PROPERTY_TYPE" { // legacy spelling of PropertyAttachedYN
+			found = true
+		}
+	}
+	if !found {
+		t.Error("alias spellings for core columns must be selected too")
+	}
+}

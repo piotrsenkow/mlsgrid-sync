@@ -26,8 +26,12 @@ type ReconcileConfig struct {
 	IncludeMissing bool
 	// ChunkSize bounds keys per re-fetch request (URL length); default 50.
 	ChunkSize int
-	Limiter   *ratelimit.Limiter
-	Log       *slog.Logger
+	// PropertySelect narrows Property re-fetches via $select (see
+	// BackfillConfig.PropertySelect). The key sweep always uses its own,
+	// narrower $select regardless.
+	PropertySelect []string
+	Limiter        *ratelimit.Limiter
+	Log            *slog.Logger
 }
 
 // ReconcileResult summarizes one resource's pass.
@@ -154,6 +158,9 @@ func (r *Reconcile) runResource(ctx context.Context, resource string, bud *budge
 		}
 		if ops.expandable {
 			q.Expand = r.cfg.Expand
+		}
+		if resource == "Property" {
+			q.Select = r.cfg.PropertySelect
 		}
 		url, err := q.URL(r.cfg.BaseURL)
 		if err != nil {

@@ -708,6 +708,73 @@ func TestMediaQueueLifecycle(t *testing.T) {
 	}
 }
 
+func TestFieldScopeFiltersRaw(t *testing.T) {
+	ctx := context.Background()
+	recs := loadFixtureRecords(t, "property_page1.json")
+	// Add an analytics-tier field and a vendor internal to the first record.
+	recs[0] = mutateFixture(t, recs[0], map[string]any{
+		"TaxAnnualAmount":    8000,
+		"SomeVendorInternal": "x",
+	})
+
+	rawFor := func(t *testing.T, s *Store, key string) map[string]any {
+		t.Helper()
+		var raw map[string]any
+		err := s.pool.QueryRow(ctx, fmt.Sprintf(
+			"SELECT raw FROM %s WHERE listing_key = $1", s.table("property")), key).Scan(&raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	scope := func(t *testing.T, name string) *fieldscope.Scope {
+		t.Helper()
+		sc, err := fieldscope.LoadScope(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sc
+	}
+
+	t.Run("minimal", func(t *testing.T) {
+		s := newTestStore(t, "t_scope_min", Options{Scope: scope(t, "minimal")})
+		if _, err := s.UpsertProperties(ctx, recs); err != nil {
+			t.Fatal(err)
+		}
+		if raw := rawFor(t, s, "TST0000000001"); raw != nil {
+			t.Errorf("minimal must store NULL raw, got %d keys", len(raw))
+		}
+		// Core columns still populate regardless of scope.
+		var price *float64
+		if err := s.pool.QueryRow(ctx, fmt.Sprintf(
+			"SELECT list_price FROM %s WHERE listing_key = $1", s.table("property")),
+			"TST0000000001").Scan(&price); err != nil {
+			t.Fatal(err)
+		}
+		if price == nil {
+			t.Error("core columns must populate under minimal")
+		}
+	})
+
+	t.Run("analytics", func(t *testing.T) {
+		s := newTestStore(t, "t_scope_an", Options{Scope: scope(t, "analytics")})
+		if _, err := s.UpsertProperties(ctx, recs); err != nil {
+			t.Fatal(err)
+		}
+		raw := rawFor(t, s, "TST0000000001")
+		if _, ok := raw["TaxAnnualAmount"]; !ok {
+			t.Error("analytics must keep tax fields in raw")
+		}
+		if _, ok := raw["SomeVendorInternal"]; ok {
+			t.Error("unmatched vendor fields must be dropped")
+		}
+		if _, ok := raw["Media"]; ok {
+			t.Error("children are relational — a filtering scope must not duplicate them in raw")
+		}
+	})
+}
+
 func TestDeletePropertiesRemovesMediaFiles(t *testing.T) {
 	ctx := context.Background()
 	var removed []string

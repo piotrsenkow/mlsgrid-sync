@@ -46,6 +46,20 @@ mlsgrid-sync sync --daemon                 # continuous replication
 | `media retry` | Re-queue failed media downloads |
 | `status` | Cursors, record counts, media queue, rate-budget usage |
 
+## Field scopes
+
+Core columns (see the [schema contract](docs/schema-contract.md)) are always populated. The profile's `field_scope` controls everything beyond them — how much of each record survives into the `raw` JSONB column, which child expansions are requested, and whether requests are narrowed with `$select`:
+
+| Scope | `raw` keeps | Notes |
+|---|---|---|
+| `minimal` | nothing (NULL) | skips Rooms/UnitTypes expansions and auto-narrows requests with `$select` — the cheapest scope against the hourly byte budget |
+| `standard` (default) | a curated keep-list: remarks, participants, dates/prices, structure, interior/exterior, systems, HOA, schools, rental terms | drops vendor internals and the long tail |
+| `analytics` | standard + tax, income, expenses, and MLS-local (`MRD_*`) fields | for investment analysis |
+| `full` | the record byte-for-byte as received | lossless, largest |
+| `path/to/scope.yaml` | your own `include:`/`exclude:` glob lists | exclude beats include; empty include means everything |
+
+Changing scope never requires a schema migration, and already-stored rows are not rewritten — the scope applies to records as they arrive.
+
 ## Media
 
 The default mode (`metadata-only`) stores media rows — URLs, captions, dimensions — without fetching files. Setting `media.mode: download` in a profile queues every discovered photo (`storage_status='pending'`) and `media download` drains the queue into a sink: a local directory or any S3-compatible bucket (AWS, MinIO, Cloudflare R2 — S3 credentials come from the standard AWS environment variables).

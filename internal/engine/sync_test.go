@@ -48,12 +48,47 @@ func syncURL(t *testing.T, cfg SyncConfig, resource string, watermark time.Time)
 	}
 	if resource == "Property" {
 		q.Expand = cfg.Expand
+		q.Select = cfg.PropertySelect
 	}
 	u, err := q.URL(cfg.BaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return u
+}
+
+func TestSyncPropertySelect(t *testing.T) {
+	cfg := testSyncConfig()
+	cfg.PropertySelect = []string{"ListingKey", "ListPrice", "ModificationTimestamp", "MlgCanView"}
+	wm := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	url := syncURL(t, cfg, "Property", wm)
+	if !strings.Contains(url, "%24select=ListingKey") {
+		t.Fatalf("expected $select in URL: %s", url)
+	}
+	fetcher := &fakeFetcher{pages: map[string]*mlsgrid.PageResult{url: {}}}
+	st := withState(0, readyState(wm))
+	if _, err := NewSync(fetcher, st, cfg).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncSelectNotAppliedToOpenHouse(t *testing.T) {
+	cfg := testSyncConfig()
+	cfg.Resources = []string{"OpenHouse"}
+	cfg.PropertySelect = []string{"ListingKey", "ListPrice"}
+	wm := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	// Build the expected URL without Select; if the engine wrongly applied
+	// PropertySelect to OpenHouse it would fetch a different URL and fail.
+	plain := testSyncConfig()
+	plain.Resources = []string{"OpenHouse"}
+	url := syncURL(t, plain, "OpenHouse", wm)
+	fetcher := &fakeFetcher{pages: map[string]*mlsgrid.PageResult{url: {}}}
+	ready := readyState(wm)
+	ready.Resource = "OpenHouse"
+	st := withState(0, ready)
+	if _, err := NewSync(fetcher, st, cfg).RunOnce(context.Background()); err != nil {
+		t.Fatalf("PropertySelect must not leak into OpenHouse queries: %v", err)
+	}
 }
 
 // readyState is a cursor row for a completed backfill.

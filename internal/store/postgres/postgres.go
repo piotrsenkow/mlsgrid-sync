@@ -20,6 +20,7 @@ type Store struct {
 	pool    *pgxpool.Pool
 	schema  string
 	aliases *fieldscope.AliasMap
+	scope   *fieldscope.Scope
 
 	// mediaStatus is the storage_status newly-discovered media rows get:
 	// "pending" queues them for download, "skipped" records metadata-only
@@ -45,6 +46,8 @@ type Options struct {
 	Schema string
 	// Aliases folds legacy per-MLS field spellings into core columns.
 	Aliases *fieldscope.AliasMap
+	// Scope filters what survives into property.raw (nil keeps everything).
+	Scope *fieldscope.Scope
 	// MediaDownload marks new media rows pending download instead of skipped.
 	MediaDownload bool
 	// MediaRemover, when set, receives the local_path values of downloaded
@@ -81,6 +84,7 @@ func NewWithPool(pool *pgxpool.Pool, opts Options) *Store {
 		pool:         pool,
 		schema:       opts.Schema,
 		aliases:      opts.Aliases,
+		scope:        opts.Scope,
 		mediaStatus:  "skipped",
 		mediaRemover: opts.MediaRemover,
 	}

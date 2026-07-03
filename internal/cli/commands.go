@@ -27,6 +27,10 @@ type deps struct {
 	store   *postgres.Store
 	pager   *mlsgrid.Pager
 	limiter *ratelimit.Limiter
+	scope   *fieldscope.Scope
+	// propertySelect is the $select list for Property requests; nil (all
+	// scopes except minimal) fetches whole records.
+	propertySelect []string
 	// sink is non-nil when the profile's media mode is download.
 	sink media.Sink
 }
@@ -52,6 +56,10 @@ func profileDeps(ctx context.Context, cmd *cobra.Command) (*deps, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := fieldscope.LoadScope(p.FieldScope)
+	if err != nil {
+		return nil, err
+	}
 	var sink media.Sink
 	var remover func(context.Context, []string)
 	if p.Media.Mode == "download" {
@@ -72,6 +80,7 @@ func profileDeps(ctx context.Context, cmd *cobra.Command) (*deps, error) {
 	st, err := postgres.New(ctx, cfg.Database.URL, postgres.Options{
 		Schema:        cfg.Database.Schema,
 		Aliases:       aliases,
+		Scope:         scope,
 		MediaDownload: p.Media.Mode == "download",
 		MediaRemover:  remover,
 	})
@@ -85,7 +94,11 @@ func profileDeps(ctx context.Context, cmd *cobra.Command) (*deps, error) {
 		BytesHourly: int64(cfg.RateLimit.BytesHourlyMB) * 1024 * 1024,
 	}, nil)
 	pager := mlsgrid.NewPager(mlsgrid.NewClient(token), limiter, nil)
-	return &deps{profile: p, store: st, pager: pager, limiter: limiter, sink: sink}, nil
+	d := &deps{profile: p, store: st, pager: pager, limiter: limiter, scope: scope, sink: sink}
+	if scope.NarrowSelect() {
+		d.propertySelect = postgres.CorePropertyFields(aliases)
+	}
+	return d, nil
 }
 
 // buildSink maps sink config to an implementation. Config validation has
@@ -163,7 +176,7 @@ important when the token's rate budget is shared with another consumer.`,
 		}
 		defer d.store.Close()
 
-		expand := []string{"Media", "Rooms", "UnitTypes"}
+		expand := d.scope.Expands()
 		if noExpand {
 			expand = nil
 		}
@@ -174,6 +187,7 @@ important when the token's rate budget is shared with another consumer.`,
 				OriginatingSystem: d.profile.OriginatingSystem,
 				PageSize:          cfg.Sync.PageSize,
 				Expand:            expand,
+				PropertySelect:    d.propertySelect,
 				Since:             since,
 				MaxPages:          maxPages,
 				Force:             force,
@@ -234,13 +248,14 @@ mean "fetch everything".`,
 		}
 		defer d.store.Close()
 
-		expand := []string{"Media", "Rooms", "UnitTypes"}
+		expand := d.scope.Expands()
 		s := engine.NewSync(d.pager, d.store, engine.SyncConfig{
 			BaseURL:           mlsgrid.DefaultBaseURL,
 			Resources:         d.resources(),
 			OriginatingSystem: d.profile.OriginatingSystem,
 			PageSize:          cfg.Sync.PageSize,
 			Expand:            expand,
+			PropertySelect:    d.propertySelect,
 			Interval:          cfg.Sync.Interval,
 			HealthAddr:        cfg.Sync.HealthAddr,
 			Limiter:           d.limiter,
@@ -251,6 +266,7 @@ mean "fetch everything".`,
 			OriginatingSystem: d.profile.OriginatingSystem,
 			PageSize:          cfg.Sync.PageSize,
 			Expand:            expand,
+			PropertySelect:    d.propertySelect,
 			Limiter:           d.limiter,
 		}), cfg.Sync.ReconcileEvery)
 		if once {
@@ -292,7 +308,8 @@ counted and logged, and only imported with --include-missing.`,
 			Resources:         d.resources(),
 			OriginatingSystem: d.profile.OriginatingSystem,
 			PageSize:          cfg.Sync.PageSize,
-			Expand:            []string{"Media", "Rooms", "UnitTypes"},
+			Expand:            d.scope.Expands(),
+			PropertySelect:    d.propertySelect,
 			IncludeMissing:    includeMissing,
 			Limiter:           d.limiter,
 		}).Run(ctx)

@@ -31,6 +31,9 @@ type SyncConfig struct {
 	OriginatingSystem string
 	PageSize          int
 	Expand            []string
+	// PropertySelect narrows Property requests via $select (see
+	// BackfillConfig.PropertySelect).
+	PropertySelect []string
 	// Interval paces daemon passes; each sleep gets up to 10% jitter so
 	// multiple daemons never synchronize their load.
 	Interval time.Duration
@@ -90,6 +93,9 @@ func (s *Sync) queryURL(resource string, expandable bool, watermark *time.Time) 
 	}
 	if expandable {
 		q.Expand = s.cfg.Expand
+	}
+	if resource == "Property" {
+		q.Select = s.cfg.PropertySelect
 	}
 	return q.URL(s.cfg.BaseURL)
 }

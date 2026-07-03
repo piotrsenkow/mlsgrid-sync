@@ -111,8 +111,18 @@ func (s *Store) UpsertProperties(ctx context.Context, recs []mlsgrid.Record) (st
 			stats.Skipped++
 			continue
 		}
+		raw, err := s.scope.FilterRaw(rec.Raw())
+		if err != nil {
+			return store.UpsertStats{}, err
+		}
 		args := append([]any{key}, extractArgs(rec, s.aliases, propertyCols)...)
-		args = append(args, rec.Raw())
+		// nil (never an empty json.RawMessage) so a fully-filtered record
+		// stores SQL NULL.
+		if len(raw) == 0 {
+			args = append(args, nil)
+		} else {
+			args = append(args, raw)
+		}
 		items = append(items, item{
 			key:       key,
 			modTS:     modTS,

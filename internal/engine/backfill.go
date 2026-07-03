@@ -29,6 +29,11 @@ type BackfillConfig struct {
 	PageSize int
 	// Expand lists child resources; nil skips expansions entirely.
 	Expand []string
+	// PropertySelect narrows Property requests to these fields via $select
+	// (other resources always fetch whole records). Set by the minimal field
+	// scope, whose raw is NULL anyway — without it the long tail is paid for
+	// against the hourly byte budget and then discarded.
+	PropertySelect []string
 	// Since bounds the import to records modified at or after this time.
 	// A bounded import still counts as a completed backfill: incremental
 	// sync will keep everything from Since forward up to date, and older
@@ -77,6 +82,9 @@ func (b *Backfill) queryURL(since *time.Time, expandable bool) (string, error) {
 	}
 	if expandable {
 		q.Expand = b.cfg.Expand
+	}
+	if b.cfg.Resource == "Property" {
+		q.Select = b.cfg.PropertySelect
 	}
 	return q.URL(b.cfg.BaseURL)
 }

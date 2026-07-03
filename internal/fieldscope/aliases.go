@@ -8,7 +8,10 @@ package fieldscope
 
 import (
 	"fmt"
+	"os"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // AliasMap maps canonical (RESO) field names to the legacy spellings that may
@@ -64,15 +67,31 @@ func Builtin(system string) (*AliasMap, error) {
 }
 
 // Load resolves a profile's field_aliases spec: "" means no aliasing,
-// "builtin:<system>" selects a shipped map. Custom alias YAML files arrive
-// with field scopes in M8.
+// "builtin:<system>" selects a shipped map, anything else is a path to a
+// custom alias YAML:
+//
+//	aliases:
+//	  ActivationDate: [MRD_ACTV_DATE]
+//	  ParkingFeatures: [MRD_GAR, MRD_PKN]
 func Load(spec string) (*AliasMap, error) {
 	switch {
 	case spec == "":
 		return nil, nil
 	case strings.HasPrefix(spec, "builtin:"):
 		return Builtin(strings.TrimPrefix(spec, "builtin:"))
-	default:
-		return nil, fmt.Errorf("custom alias-map files are not supported yet (planned for M8) — use builtin:<system> or leave field_aliases empty")
 	}
+	data, err := os.ReadFile(spec)
+	if err != nil {
+		return nil, fmt.Errorf("fieldscope: reading custom alias map %s: %w", spec, err)
+	}
+	var doc struct {
+		Aliases map[string][]string `yaml:"aliases"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("fieldscope: parsing custom alias map %s: %w", spec, err)
+	}
+	if len(doc.Aliases) == 0 {
+		return nil, fmt.Errorf("fieldscope: custom alias map %s has no aliases: mapping (canonical name -> legacy spellings)", spec)
+	}
+	return NewAliasMap(doc.Aliases), nil
 }
