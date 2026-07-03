@@ -4,6 +4,8 @@ package cli
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -41,6 +43,7 @@ for every feed you sync. See docs/compliance.md.`,
 
 // Execute runs the root command.
 func Execute() error {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	return rootCmd.Execute()
 }
 
