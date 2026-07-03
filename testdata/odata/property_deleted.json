@@ -1,0 +1,23 @@
+{
+  "@odata.context": "{{BASE}}/$metadata#Property",
+  "value": [
+    {
+      "ListingKey": "TST0000000002",
+      "OriginatingSystemName": "testmls",
+      "MlgCanView": false,
+      "ModificationTimestamp": "2026-06-02T09:00:00Z"
+    },
+    {
+      "ListingKey": "TST0000000004",
+      "ListingId": "TST44444444",
+      "OriginatingSystemName": "testmls",
+      "StandardStatus": "Active",
+      "MlgCanView": true,
+      "ListPrice": 510000,
+      "ModificationTimestamp": "2026-06-02T09:00:01Z",
+      "Media": [],
+      "Rooms": [],
+      "UnitTypes": []
+    }
+  ]
+}

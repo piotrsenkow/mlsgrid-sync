@@ -1,0 +1,29 @@
+{
+  "@odata.context": "{{BASE}}/$metadata#Property",
+  "value": [
+    {
+      "ListingKey": "TST0000000003",
+      "ListingId": "TST33333333",
+      "OriginatingSystemName": "testmls",
+      "StandardStatus": "Pending",
+      "PropertyType": "Residential Lease",
+      "MlgCanView": true,
+      "MlgCanUse": ["IDX"],
+      "ListPrice": 2200,
+      "City": "Testville",
+      "StateOrProvince": "IL",
+      "ModificationTimestamp": "2026-06-01T12:00:01Z",
+      "Media": [],
+      "Rooms": [],
+      "UnitTypes": [
+        {
+          "UnitTypeKey": "TSTUNIT0001",
+          "UnitTypeType": "2 Bedroom",
+          "UnitTypeBedsTotal": 2,
+          "UnitTypeBathsTotal": 1,
+          "UnitTypeActualRent": 2200
+        }
+      ]
+    }
+  ]
+}

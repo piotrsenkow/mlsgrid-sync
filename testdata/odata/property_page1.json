@@ -1,0 +1,84 @@
+{
+  "@odata.context": "{{BASE}}/$metadata#Property",
+  "value": [
+    {
+      "ListingKey": "TST0000000001",
+      "ListingId": "TST11111111",
+      "OriginatingSystemName": "testmls",
+      "StandardStatus": "Active",
+      "MlsStatus": "ACTV",
+      "PropertyType": "Residential",
+      "PropertySubType": "Single Family Residence",
+      "MlgCanView": true,
+      "MlgCanUse": ["IDX", "VOW"],
+      "ListPrice": 425000,
+      "OriginalListPrice": 450000,
+      "StreetNumber": "123",
+      "StreetName": "Example",
+      "StreetSuffix": "St",
+      "City": "Testville",
+      "PostalCode": "60000",
+      "CountyOrParish": "Test County",
+      "StateOrProvince": "IL",
+      "BedroomsTotal": 4,
+      "BathroomsFull": 2,
+      "BathroomsHalf": 1,
+      "LivingArea": 2400,
+      "YearBuilt": 1998,
+      "PublicRemarks": "Synthetic fixture record for tests. Not real listing data.",
+      "ModificationTimestamp": "2026-06-01T12:00:00.123Z",
+      "OriginalEntryTimestamp": "2026-05-01T09:30:00Z",
+      "PhotosChangeTimestamp": "2026-05-20T08:00:00Z",
+      "PhotosCount": 2,
+      "Media": [
+        {
+          "MediaKey": "TSTMEDIA0001",
+          "MediaURL": "https://media.example.test/TSTMEDIA0001.jpg",
+          "Order": 0,
+          "ImageWidth": 1024,
+          "ImageHeight": 768,
+          "MediaModificationTimestamp": "2026-05-20T08:00:00Z"
+        },
+        {
+          "MediaKey": "TSTMEDIA0002",
+          "MediaURL": "https://media.example.test/TSTMEDIA0002.jpg",
+          "Order": 1,
+          "ImageWidth": 1024,
+          "ImageHeight": 768,
+          "MediaModificationTimestamp": "2026-05-20T08:00:01Z"
+        }
+      ],
+      "Rooms": [
+        {
+          "RoomKey": "TSTROOM0001",
+          "RoomType": "Bedroom",
+          "RoomLevel": "Second",
+          "RoomDimensions": "12X14"
+        }
+      ],
+      "UnitTypes": []
+    },
+    {
+      "ListingKey": "TST0000000002",
+      "ListingId": "TST22222222",
+      "OriginatingSystemName": "testmls",
+      "StandardStatus": "Closed",
+      "PropertyType": "Residential",
+      "MlgCanView": true,
+      "MlgCanUse": ["IDX"],
+      "ListPrice": 300000,
+      "ClosePrice": 295000,
+      "CloseDate": "2026-04-15",
+      "City": "Testville",
+      "PostalCode": "60001",
+      "StateOrProvince": "IL",
+      "BedroomsTotal": 2,
+      "BathroomsFull": 1,
+      "ModificationTimestamp": "2026-06-01T12:00:00.456Z",
+      "Media": [],
+      "Rooms": [],
+      "UnitTypes": []
+    }
+  ],
+  "@odata.nextLink": "{{BASE}}/Property?$skip=2"
+}

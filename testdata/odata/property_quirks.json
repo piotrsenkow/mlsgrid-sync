@@ -1,0 +1,35 @@
+{
+  "@odata.context": "{{BASE}}/$metadata#Property",
+  "value": [
+    {
+      "ListingKey": "TSTQUIRK00001",
+      "OriginatingSystemName": "testmls",
+      "MlgCanView": true,
+      "DaysOnMarket": 12.0,
+      "TaxYear": 2024.0,
+      "ModificationTimestamp": "2026-06-01T10:00:00",
+      "Contingency": ["Attorney Review", "Financing"],
+      "Possession": "Closing",
+      "CloseDate": "TBD",
+      "OffMarketDate": "2026-05-30",
+      "MRD_BAS": "Full",
+      "MRD_ACTV_DATE": "2025-03-01T00:00:00Z",
+      "Media": [],
+      "Rooms": [],
+      "UnitTypes": []
+    },
+    {
+      "ListingKey": "TSTQUIRK00002",
+      "OriginatingSystemName": "testmls",
+      "MlgCanView": true,
+      "Contingency": "A/R",
+      "Basement": ["Finished", "Full"],
+      "ActivationDate": "2026-05-01T00:00:00Z",
+      "CloseDate": "2026-05-15",
+      "ModificationTimestamp": "2026-06-01T10:00:00.999Z",
+      "Media": [],
+      "Rooms": [],
+      "UnitTypes": []
+    }
+  ]
+}

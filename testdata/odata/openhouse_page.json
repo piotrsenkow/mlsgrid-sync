@@ -1,0 +1,17 @@
+{
+  "@odata.context": "{{BASE}}/$metadata#OpenHouse",
+  "value": [
+    {
+      "OpenHouseKey": "TSTOH00000001",
+      "ListingKey": "TST0000000001",
+      "ListingId": "TST11111111",
+      "OriginatingSystemName": "testmls",
+      "MlgCanView": true,
+      "OpenHouseDate": "2026-06-07",
+      "OpenHouseStartTime": "2026-06-07T17:00:00Z",
+      "OpenHouseEndTime": "2026-06-07T19:00:00Z",
+      "OpenHouseRemarks": "Synthetic fixture open house.",
+      "ModificationTimestamp": "2026-06-01T13:00:00Z"
+    }
+  ]
+}
