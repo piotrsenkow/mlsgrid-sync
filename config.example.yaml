@@ -1,0 +1,41 @@
+# mlsgrid-sync example configuration.
+# Copy to mlsgrid-sync.yaml (gitignored) and adjust.
+# Every value can be overridden with MLSGRID_-prefixed env vars,
+# e.g. MLSGRID_DATABASE_URL overrides database.url.
+
+database:
+  # Prefer setting the URL via MLSGRID_DATABASE_URL instead of the file.
+  url: ""
+  schema: mlsgrid
+
+profiles:
+  # One profile per MLS feed you are approved for. The key is your own label.
+  mred:
+    originating_system: mred        # MLS Grid system slug for the feed
+    token_env: MLSGRID_TOKEN_MRED   # env var holding your bearer token — never put tokens in this file
+    field_scope: standard           # minimal | standard | analytics | full | path/to/scope.yaml
+    field_aliases: builtin:mred     # ships the 2025-04 MRED rename map; or path/to/aliases.yaml
+    resources: [Property, OpenHouse]
+    media:
+      mode: metadata-only           # metadata-only | download
+      # sink:                       # required for download mode
+      #   type: disk                # disk | s3 (any S3-compatible endpoint)
+      #   path: /var/lib/mlsgrid/media
+      #   # type: s3
+      #   # endpoint: https://s3.us-east-1.amazonaws.com
+      #   # bucket: my-mls-media
+      #   # prefix: mred/
+      #   # region: us-east-1
+
+sync:
+  interval: 5m          # daemon-mode pause between catch-up passes
+  reconcile_every: 24h  # full-feed purge sweep cadence
+  page_size: 1000       # $top; the API caps this at 1000 when expanding
+
+# Defaults sit under MLS Grid's published caps (2 rps, 7200/hr, 40000/day,
+# 4 GB/hr). Values above the caps are refused at startup.
+ratelimit:
+  rps: 1.8
+  hourly: 6800
+  daily: 38000
+  bytes_hourly_mb: 3500

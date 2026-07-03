@@ -1,0 +1,6 @@
+bin/
+.env
+*.local.yaml
+mlsgrid-sync.yaml
+coverage.out
+dist/
