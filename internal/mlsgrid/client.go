@@ -102,7 +102,7 @@ func (c *Client) FetchPage(ctx context.Context, url string) (*PageResult, error)
 	if err != nil {
 		return nil, fmt.Errorf("mlsgrid: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	counter := &countingReader{r: resp.Body}
 	var body io.Reader = counter
@@ -111,7 +111,7 @@ func (c *Client) FetchPage(ctx context.Context, url string) (*PageResult, error)
 		if err != nil {
 			return nil, fmt.Errorf("mlsgrid: bad gzip response: %w", err)
 		}
-		defer gz.Close()
+		defer func() { _ = gz.Close() }()
 		body = gz
 	}
 
