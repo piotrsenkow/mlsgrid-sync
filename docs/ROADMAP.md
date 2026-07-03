@@ -8,7 +8,7 @@ Milestones are sized so each is one focused working session. Check the box when 
 - [x] **M3 — Store.** `internal/store` interface + Postgres impl (pgx/v5): embedded migrations implementing schema contract v1.0.0, single table-driven field→column map, MRED alias normalization (`internal/fieldscope` builtin map), upserts with `listing_event` change capture, golden-schema test, `init-db` command, testcontainers integration tests.
 - [x] **M4 — Backfill.** `MlgCanView eq true` paging, resume via `sync_state.in_progress_url`, `$skip`-wall recovery (rebuild timestamp-filtered URL), progress reporting, `--force` guard over non-empty tables. Also shipped: `--since` (bounded import for trials / shared-token budgets) and `--max-pages` (smoke-test cap that keeps the resume cursor).
 - [x] **M5 — Incremental sync.** Cursor invariants (`ge` semantics, refuse NULL watermark), `MlgCanView=false` hard deletes + `delisted` events, `sync --once` and `sync --daemon` (interval + jitter, localhost health endpoint), systemd unit. Also shipped: functional `status` command (cursors + counts).
-- [ ] **M6 — Reconcile + OpenHouse.** Full-feed key sweep + purge/re-queue, OpenHouse resource sync, rate-budget persistence to `rate_budget`.
+- [x] **M6 — Reconcile + OpenHouse.** Full-feed key sweep + purge/re-queue, OpenHouse resource sync, rate-budget persistence to `rate_budget`. Reconcile skips remote-only records by default (bounded backfills stay bounded); `--include-missing` imports them. Known limitation: sweeps of feeds beyond the API's deep-paging limit (~500K records) need windowed sweeps — a v1.1 candidate.
 - [ ] **M7 — Media.** `metadata-only` and `download` modes, `User-Agent: <token>` header (tested), disk + S3-compatible sinks, MediaKey-immutability dedup, per-URL failure tolerance, `media retry`.
 - [ ] **M8 — Field scopes.** Presets (`minimal` / `standard` / `analytics` / `full`), custom YAML include/exclude globs, automatic `$select` optimization for narrow scopes.
 - [ ] **M9 — v0.1.0 release.** architecture.md, README polish, docker-compose quickstart (bundled Postgres), goreleaser, badges, issue templates (incl. "MLS quirk report").
@@ -18,3 +18,4 @@ Milestones are sized so each is one focused working session. Check the box when 
 - Member / Office / Lookup resources
 - SQLite store
 - Additional MLS alias maps contributed via "MLS quirk report" issues
+- Windowed reconcile sweeps (feeds larger than the API's ~500K deep-paging limit)

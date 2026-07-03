@@ -19,20 +19,35 @@ import (
 	"github.com/piotrsenkow/mlsgrid-sync/internal/store/postgres"
 )
 
-// profileDeps opens the store and API pager for a profile-scoped command.
-// The caller owns closing the returned store.
-func profileDeps(ctx context.Context, cmd *cobra.Command) (*config.Profile, *postgres.Store, *mlsgrid.Pager, error) {
+// deps bundles what profile-scoped commands need. The caller owns Close on
+// the store.
+type deps struct {
+	profile *config.Profile
+	store   *postgres.Store
+	pager   *mlsgrid.Pager
+	limiter *ratelimit.Limiter
+}
+
+// resources returns the profile's configured resources (default Property).
+func (d *deps) resources() []string {
+	if len(d.profile.Resources) == 0 {
+		return []string{"Property"}
+	}
+	return d.profile.Resources
+}
+
+func profileDeps(ctx context.Context, cmd *cobra.Command) (*deps, error) {
 	p, err := selectedProfile(cmd)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	token, err := p.Token()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	aliases, err := fieldscope.Load(p.FieldAliases)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	st, err := postgres.New(ctx, cfg.Database.URL, postgres.Options{
 		Schema:        cfg.Database.Schema,
@@ -40,7 +55,7 @@ func profileDeps(ctx context.Context, cmd *cobra.Command) (*config.Profile, *pos
 		MediaDownload: p.Media.Mode == "download",
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	limiter := ratelimit.New(ratelimit.Config{
 		RPS:         cfg.RateLimit.RPS,
@@ -49,7 +64,7 @@ func profileDeps(ctx context.Context, cmd *cobra.Command) (*config.Profile, *pos
 		BytesHourly: int64(cfg.RateLimit.BytesHourlyMB) * 1024 * 1024,
 	}, nil)
 	pager := mlsgrid.NewPager(mlsgrid.NewClient(token), limiter, nil)
-	return p, st, pager, nil
+	return &deps{profile: p, store: st, pager: pager, limiter: limiter}, nil
 }
 
 // version is set via -ldflags "-X ...cli.version=v0.1.0" by goreleaser;
@@ -103,26 +118,33 @@ important when the token's rate budget is shared with another consumer.`,
 			return err
 		}
 
-		p, st, pager, err := profileDeps(ctx, cmd)
+		d, err := profileDeps(ctx, cmd)
 		if err != nil {
 			return err
 		}
-		defer st.Close()
+		defer d.store.Close()
 
 		expand := []string{"Media", "Rooms", "UnitTypes"}
 		if noExpand {
 			expand = nil
 		}
-		return engine.NewBackfill(pager, st, engine.BackfillConfig{
-			BaseURL:           mlsgrid.DefaultBaseURL,
-			Resource:          "Property",
-			OriginatingSystem: p.OriginatingSystem,
-			PageSize:          cfg.Sync.PageSize,
-			Expand:            expand,
-			Since:             since,
-			MaxPages:          maxPages,
-			Force:             force,
-		}).Run(ctx)
+		for _, resource := range d.resources() {
+			err := engine.NewBackfill(d.pager, d.store, engine.BackfillConfig{
+				BaseURL:           mlsgrid.DefaultBaseURL,
+				Resource:          resource,
+				OriginatingSystem: d.profile.OriginatingSystem,
+				PageSize:          cfg.Sync.PageSize,
+				Expand:            expand,
+				Since:             since,
+				MaxPages:          maxPages,
+				Force:             force,
+				Limiter:           d.limiter,
+			}).Run(ctx)
+			if err != nil {
+				return fmt.Errorf("backfilling %s: %w", resource, err)
+			}
+		}
+		return nil
 	},
 }
 
@@ -167,21 +189,31 @@ mean "fetch everything".`,
 		}
 
 		ctx := cmd.Context()
-		p, st, pager, err := profileDeps(ctx, cmd)
+		d, err := profileDeps(ctx, cmd)
 		if err != nil {
 			return err
 		}
-		defer st.Close()
+		defer d.store.Close()
 
-		s := engine.NewSync(pager, st, engine.SyncConfig{
+		expand := []string{"Media", "Rooms", "UnitTypes"}
+		s := engine.NewSync(d.pager, d.store, engine.SyncConfig{
 			BaseURL:           mlsgrid.DefaultBaseURL,
-			Resource:          "Property",
-			OriginatingSystem: p.OriginatingSystem,
+			Resources:         d.resources(),
+			OriginatingSystem: d.profile.OriginatingSystem,
 			PageSize:          cfg.Sync.PageSize,
-			Expand:            []string{"Media", "Rooms", "UnitTypes"},
+			Expand:            expand,
 			Interval:          cfg.Sync.Interval,
 			HealthAddr:        cfg.Sync.HealthAddr,
+			Limiter:           d.limiter,
 		})
+		s.SetReconciler(engine.NewReconcile(d.pager, d.store, engine.ReconcileConfig{
+			BaseURL:           mlsgrid.DefaultBaseURL,
+			Resources:         d.resources(),
+			OriginatingSystem: d.profile.OriginatingSystem,
+			PageSize:          cfg.Sync.PageSize,
+			Expand:            expand,
+			Limiter:           d.limiter,
+		}), cfg.Sync.ReconcileEvery)
 		if once {
 			res, err := s.RunOnce(ctx)
 			if err != nil {
@@ -201,12 +233,30 @@ var reconcileCmd = &cobra.Command{
 	Short: "Full-feed key sweep: purge locally-stored records the feed no longer returns",
 	Long: `MlgCanView=false records leave the feed after ~7 days; deletions that occur
 while mlsgrid-sync is not running are only caught by this pass. The daemon
-schedules it automatically per sync.reconcile_every.`,
+schedules it automatically per sync.reconcile_every.
+
+The sweep fetches only keys and timestamps, then purges local records missing
+remotely and re-fetches records whose remote timestamp is newer. Records that
+exist remotely but not locally (normal after a bounded --since backfill) are
+counted and logged, and only imported with --include-missing.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if _, err := selectedProfile(cmd); err != nil {
+		ctx := cmd.Context()
+		includeMissing, _ := cmd.Flags().GetBool("include-missing")
+		d, err := profileDeps(ctx, cmd)
+		if err != nil {
 			return err
 		}
-		return notImplemented("M6")
+		defer d.store.Close()
+
+		return engine.NewReconcile(d.pager, d.store, engine.ReconcileConfig{
+			BaseURL:           mlsgrid.DefaultBaseURL,
+			Resources:         d.resources(),
+			OriginatingSystem: d.profile.OriginatingSystem,
+			PageSize:          cfg.Sync.PageSize,
+			Expand:            []string{"Media", "Rooms", "UnitTypes"},
+			IncludeMissing:    includeMissing,
+			Limiter:           d.limiter,
+		}).Run(ctx)
 	},
 }
 
@@ -238,12 +288,7 @@ var statusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		count, err := st.PropertyCount(ctx)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("schema:            %s (contract %s)\n", cfg.Database.Schema, version)
-		fmt.Printf("properties stored: %d\n", count)
+		fmt.Printf("schema: %s (contract %s)\n", cfg.Database.Schema, version)
 
 		names := make([]string, 0, len(cfg.Profiles))
 		for n := range cfg.Profiles {
@@ -257,24 +302,44 @@ var statusCmd = &cobra.Command{
 				resources = []string{"Property"}
 			}
 			for _, r := range resources {
+				count, err := st.Count(ctx, r)
+				if err != nil {
+					return err
+				}
 				state, err := st.SyncState(ctx, r, p.OriginatingSystem)
 				if err != nil {
 					return err
 				}
 				fmt.Printf("\nprofile %s — %s/%s\n", name, r, p.OriginatingSystem)
+				fmt.Printf("  stored:     %d\n", count)
 				if state == nil {
-					fmt.Println("  cursor:   none (backfill has not run)")
+					fmt.Println("  cursor:     none (backfill has not run)")
 					continue
 				}
-				fmt.Printf("  watermark: %s\n", fmtTime(state.LastModificationTS))
-				fmt.Printf("  backfill:  %s\n", fmtCompletion(state))
-				if state.LastFullReconcileAt != nil {
-					fmt.Printf("  reconciled: %s\n", fmtTime(state.LastFullReconcileAt))
-				}
+				fmt.Printf("  watermark:  %s\n", fmtTime(state.LastModificationTS))
+				fmt.Printf("  backfill:   %s\n", fmtCompletion(state))
+				fmt.Printf("  reconciled: %s\n", fmtTime(state.LastFullReconcileAt))
 			}
 		}
+
+		usage, err := st.RateBudget(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\nrate budget (persisted)\n")
+		fmt.Printf("  hour window %s: %d requests, %.1f MB\n",
+			fmtWindow(usage.HourStart), usage.HourRequests, float64(usage.HourBytes)/(1024*1024))
+		fmt.Printf("  day window  %s: %d requests\n",
+			fmtWindow(usage.DayStart), usage.DayRequests)
 		return nil
 	},
+}
+
+func fmtWindow(t time.Time) string {
+	if t.IsZero() {
+		return "none"
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func fmtTime(t *time.Time) string {
@@ -313,6 +378,7 @@ func init() {
 	backfillCmd.Flags().Bool("no-expand", false, "skip Rooms/UnitTypes/Media expansions (faster column backfill)")
 	backfillCmd.Flags().String("since", "", "bound the import to records modified after a duration ago (24h) or a time (2026-07-01)")
 	backfillCmd.Flags().Int("max-pages", 0, "stop after N pages, keeping the resume cursor (0 = unlimited)")
+	reconcileCmd.Flags().Bool("include-missing", false, "also import remote records absent locally (turns a bounded import into a fuller one)")
 	syncCmd.Flags().Bool("once", false, "run one catch-up pass and exit 0")
 	syncCmd.Flags().Bool("daemon", false, "run continuously at sync.interval")
 	mediaCmd.AddCommand(mediaRetryCmd)

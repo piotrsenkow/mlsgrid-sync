@@ -19,7 +19,7 @@ import (
 func testSyncConfig() SyncConfig {
 	return SyncConfig{
 		BaseURL:           "https://replay.example.test/v2",
-		Resource:          "Property",
+		Resources:         []string{"Property"},
 		OriginatingSystem: "testmls",
 		PageSize:          2,
 		Expand:            []string{"Media", "Rooms", "UnitTypes"},
@@ -28,16 +28,28 @@ func testSyncConfig() SyncConfig {
 	}
 }
 
+// withStateMaybe seeds a fakeStore with an optional cursor row.
+func withStateMaybe(s *store.SyncState) *fakeStore {
+	if s == nil {
+		return &fakeStore{}
+	}
+	return withState(0, s)
+}
+
 // syncURL computes the incremental URL for a watermark, mirroring the engine.
-func syncURL(t *testing.T, cfg SyncConfig, watermark time.Time) string {
+// Only Property expands children.
+func syncURL(t *testing.T, cfg SyncConfig, resource string, watermark time.Time) string {
 	t.Helper()
-	u, err := mlsgrid.Query{
-		Resource:                cfg.Resource,
+	q := mlsgrid.Query{
+		Resource:                resource,
 		OriginatingSystem:       cfg.OriginatingSystem,
 		ModificationTimestampGE: &watermark,
-		Expand:                  cfg.Expand,
 		Top:                     cfg.PageSize,
-	}.URL(cfg.BaseURL)
+	}
+	if resource == "Property" {
+		q.Expand = cfg.Expand
+	}
+	u, err := q.URL(cfg.BaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +85,7 @@ func TestSyncRefusesWithoutCompletedBackfill(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := &fakeStore{state: tc.state}
+			st := withStateMaybe(tc.state)
 			_, err := NewSync(&fakeFetcher{}, st, cfg).RunOnce(context.Background())
 			if !errors.Is(err, ErrBackfillRequired) {
 				t.Fatalf("want ErrBackfillRequired, got %v", err)
@@ -85,7 +97,7 @@ func TestSyncRefusesWithoutCompletedBackfill(t *testing.T) {
 func TestSyncHappyPathDeletesRevoked(t *testing.T) {
 	cfg := testSyncConfig()
 	wm := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	first := syncURL(t, cfg, wm)
+	first := syncURL(t, cfg, "Property", wm)
 
 	fetcher := &fakeFetcher{pages: map[string]*mlsgrid.PageResult{
 		first: {Records: []mlsgrid.Record{
@@ -93,7 +105,7 @@ func TestSyncHappyPathDeletesRevoked(t *testing.T) {
 			rec(t, "TSTGONE", "2026-06-01T13:30:00.000Z", false),
 		}},
 	}}
-	st := &fakeStore{state: readyState(wm)}
+	st := withState(0, readyState(wm))
 
 	res, err := NewSync(fetcher, st, cfg).RunOnce(context.Background())
 	if err != nil {
@@ -117,7 +129,7 @@ func TestSyncHappyPathDeletesRevoked(t *testing.T) {
 
 	// Watermark advanced to the revoked record's timestamp (it was the
 	// newest) and completion state survived the cursor write.
-	final := st.state
+	final := st.states["Property"]
 	want := time.Date(2026, 6, 1, 13, 30, 0, 0, time.UTC)
 	if final.LastModificationTS == nil || !final.LastModificationTS.Equal(want) {
 		t.Errorf("watermark = %v, want %v", final.LastModificationTS, want)
@@ -130,10 +142,10 @@ func TestSyncHappyPathDeletesRevoked(t *testing.T) {
 func TestSyncRebuildsAfter400(t *testing.T) {
 	cfg := testSyncConfig()
 	wm := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	first := syncURL(t, cfg, wm)
+	first := syncURL(t, cfg, "Property", wm)
 	stale := cfg.BaseURL + "/Property?stale-next"
 	advanced := time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)
-	rebuilt := syncURL(t, cfg, advanced)
+	rebuilt := syncURL(t, cfg, "Property", advanced)
 
 	fetcher := &fakeFetcher{
 		pages: map[string]*mlsgrid.PageResult{
@@ -147,7 +159,7 @@ func TestSyncRebuildsAfter400(t *testing.T) {
 			stale: &mlsgrid.HTTPError{StatusCode: 400, Body: "stale skiptoken"},
 		},
 	}
-	st := &fakeStore{state: readyState(wm)}
+	st := withState(0, readyState(wm))
 	res, err := NewSync(fetcher, st, cfg).RunOnce(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -160,11 +172,11 @@ func TestSyncRebuildsAfter400(t *testing.T) {
 func TestDaemonLoopsUntilCancelled(t *testing.T) {
 	cfg := testSyncConfig()
 	wm := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	url := syncURL(t, cfg, wm)
+	url := syncURL(t, cfg, "Property", wm)
 	// Empty pages leave the watermark unchanged, so every pass fetches the
 	// same URL — a permanently caught-up feed.
 	fetcher := &fakeFetcher{pages: map[string]*mlsgrid.PageResult{url: {}}}
-	st := &fakeStore{state: readyState(wm)}
+	st := withState(0, readyState(wm))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
@@ -179,11 +191,11 @@ func TestDaemonLoopsUntilCancelled(t *testing.T) {
 func TestDaemonHaltsOnOpenCircuit(t *testing.T) {
 	cfg := testSyncConfig()
 	wm := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	url := syncURL(t, cfg, wm)
+	url := syncURL(t, cfg, "Property", wm)
 	fetcher := &fakeFetcher{stickyErrs: map[string]error{
 		url: fmt.Errorf("fetch: %w", ratelimit.ErrCircuitOpen),
 	}}
-	st := &fakeStore{state: readyState(wm)}
+	st := withState(0, readyState(wm))
 
 	err := NewSync(fetcher, st, cfg).RunDaemon(context.Background())
 	if !errors.Is(err, ratelimit.ErrCircuitOpen) {

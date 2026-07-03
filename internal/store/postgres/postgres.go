@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -112,10 +113,49 @@ func (s *Store) ContractVersion(ctx context.Context) (string, error) {
 	return v, nil
 }
 
-// PropertyCount reports stored property rows.
-func (s *Store) PropertyCount(ctx context.Context) (int64, error) {
+// resourceTable maps a feed resource to its table and key column.
+func resourceTable(resource string) (table, keyCol string, err error) {
+	switch resource {
+	case "Property":
+		return "property", "listing_key", nil
+	case "OpenHouse":
+		return "open_house", "open_house_key", nil
+	default:
+		return "", "", fmt.Errorf("unknown resource %q", resource)
+	}
+}
+
+// Count reports stored rows for a resource.
+func (s *Store) Count(ctx context.Context, resource string) (int64, error) {
+	table, _, err := resourceTable(resource)
+	if err != nil {
+		return 0, err
+	}
 	var n int64
-	err := s.pool.QueryRow(ctx, fmt.Sprintf(
-		"SELECT count(*) FROM %s", s.table("property"))).Scan(&n)
+	err = s.pool.QueryRow(ctx, fmt.Sprintf(
+		"SELECT count(*) FROM %s", s.table(table))).Scan(&n)
 	return n, err
+}
+
+// ListKeys returns every stored key with its local modification timestamp.
+func (s *Store) ListKeys(ctx context.Context, resource string) (map[string]time.Time, error) {
+	table, keyCol, err := resourceTable(resource)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(
+		"SELECT %s, modification_timestamp FROM %s", keyCol, s.table(table)))
+	if err != nil {
+		return nil, err
+	}
+	keys := make(map[string]time.Time)
+	var key string
+	var ts time.Time
+	if _, err := pgx.ForEachRow(rows, []any{&key, &ts}, func() error {
+		keys[key] = ts
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }

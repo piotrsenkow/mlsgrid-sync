@@ -10,16 +10,33 @@ import (
 	"time"
 
 	"github.com/piotrsenkow/mlsgrid-sync/internal/mlsgrid"
+	"github.com/piotrsenkow/mlsgrid-sync/internal/ratelimit"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/store"
 )
 
 // fakeStore is an in-memory store.Store capturing engine interactions.
+// States are keyed by resource (single originating system assumed in tests).
 type fakeStore struct {
 	count        int64
-	state        *store.SyncState
+	states       map[string]*store.SyncState
 	stateHistory []store.SyncState
 	upsertedKeys []string
 	deletedKeys  []string
+	ohUpserted   []string
+	ohDeleted    []string
+	localKeys    map[string]time.Time
+	budget       ratelimit.Usage
+	budgetReads  int
+	budgetWrites int
+}
+
+// withState seeds a fakeStore with cursor rows.
+func withState(count int64, states ...*store.SyncState) *fakeStore {
+	f := &fakeStore{count: count, states: map[string]*store.SyncState{}}
+	for _, s := range states {
+		f.states[s.Resource] = s
+	}
+	return f
 }
 
 func (f *fakeStore) Migrate(ctx context.Context) error                   { return nil }
@@ -45,29 +62,56 @@ func (f *fakeStore) DeleteProperties(ctx context.Context, keys []string) (int64,
 }
 
 func (f *fakeStore) UpsertOpenHouses(ctx context.Context, recs []mlsgrid.Record) (store.UpsertStats, error) {
-	return store.UpsertStats{}, nil
+	var stats store.UpsertStats
+	for _, rec := range recs {
+		f.ohUpserted = append(f.ohUpserted, rec.String("OpenHouseKey"))
+		stats.Inserted++
+	}
+	return stats, nil
 }
 
 func (f *fakeStore) DeleteOpenHouses(ctx context.Context, keys []string) (int64, error) {
-	return 0, nil
+	f.ohDeleted = append(f.ohDeleted, keys...)
+	return int64(len(keys)), nil
 }
 
 func (f *fakeStore) SyncState(ctx context.Context, resource, system string) (*store.SyncState, error) {
-	if f.state == nil {
+	s, ok := f.states[resource]
+	if !ok || s == nil {
 		return nil, nil
 	}
-	cp := *f.state
+	cp := *s
 	return &cp, nil
 }
 
 func (f *fakeStore) SetSyncState(ctx context.Context, s store.SyncState) error {
+	if f.states == nil {
+		f.states = map[string]*store.SyncState{}
+	}
 	cp := s
-	f.state = &cp
+	f.states[s.Resource] = &cp
 	f.stateHistory = append(f.stateHistory, s)
 	return nil
 }
 
-func (f *fakeStore) PropertyCount(ctx context.Context) (int64, error) { return f.count, nil }
+func (f *fakeStore) Count(ctx context.Context, resource string) (int64, error) {
+	return f.count, nil
+}
+
+func (f *fakeStore) ListKeys(ctx context.Context, resource string) (map[string]time.Time, error) {
+	return f.localKeys, nil
+}
+
+func (f *fakeStore) RateBudget(ctx context.Context) (ratelimit.Usage, error) {
+	f.budgetReads++
+	return f.budget, nil
+}
+
+func (f *fakeStore) SetRateBudget(ctx context.Context, u ratelimit.Usage) error {
+	f.budget = u
+	f.budgetWrites++
+	return nil
+}
 
 // fakeFetcher serves canned pages (or errors) by URL.
 type fakeFetcher struct {
@@ -209,10 +253,10 @@ func TestBackfillRefusesCompletedWithoutForce(t *testing.T) {
 	cfg := testConfig()
 	done := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	ts := done
-	st := &fakeStore{state: &store.SyncState{
+	st := withState(0, &store.SyncState{
 		Resource: "Property", OriginatingSystem: "testmls",
 		LastModificationTS: &ts, BackfillCompletedAt: &done,
-	}}
+	})
 	err := NewBackfill(&fakeFetcher{}, st, cfg).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("completed backfill must require --force, got %v", err)
@@ -223,13 +267,11 @@ func TestBackfillResumesFromPersistedURL(t *testing.T) {
 	cfg := testConfig()
 	resume := cfg.BaseURL + "/Property?$skip=4000"
 	ts := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
-	st := &fakeStore{
-		count: 4000, // existing rows must not require --force when resuming
-		state: &store.SyncState{
-			Resource: "Property", OriginatingSystem: "testmls",
-			LastModificationTS: &ts, InProgressURL: &resume,
-		},
-	}
+	// existing rows must not require --force when resuming
+	st := withState(4000, &store.SyncState{
+		Resource: "Property", OriginatingSystem: "testmls",
+		LastModificationTS: &ts, InProgressURL: &resume,
+	})
 	fetcher := &fakeFetcher{pages: map[string]*mlsgrid.PageResult{
 		resume: {Records: []mlsgrid.Record{rec(t, "TST9", "2026-06-01T13:00:00.000Z", true)}},
 	}}
@@ -239,7 +281,7 @@ func TestBackfillResumesFromPersistedURL(t *testing.T) {
 	if fetcher.fetched[0] != resume {
 		t.Errorf("must resume from persisted URL, fetched %s", fetcher.fetched[0])
 	}
-	if st.state.BackfillCompletedAt == nil {
+	if st.states["Property"].BackfillCompletedAt == nil {
 		t.Error("resumed run must complete the backfill")
 	}
 }
@@ -324,10 +366,10 @@ func TestBackfillMaxPagesStopsWithResumeCursor(t *testing.T) {
 	if len(fetcher.fetched) != 1 {
 		t.Errorf("fetched %d pages, want 1", len(fetcher.fetched))
 	}
-	if st.state.InProgressURL == nil || *st.state.InProgressURL != next {
-		t.Errorf("resume cursor must survive a capped run: %+v", st.state)
+	if st.states["Property"].InProgressURL == nil || *st.states["Property"].InProgressURL != next {
+		t.Errorf("resume cursor must survive a capped run: %+v", st.states["Property"])
 	}
-	if st.state.BackfillCompletedAt != nil {
+	if st.states["Property"].BackfillCompletedAt != nil {
 		t.Error("a capped run must not mark the backfill complete")
 	}
 }
@@ -363,10 +405,10 @@ func TestBackfillEmptyFeedStillSetsCursor(t *testing.T) {
 	if err := NewBackfill(fetcher, st, cfg).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if st.state == nil || st.state.BackfillCompletedAt == nil {
+	if st.states["Property"] == nil || st.states["Property"].BackfillCompletedAt == nil {
 		t.Fatal("empty feed must still complete")
 	}
-	if st.state.LastModificationTS == nil {
+	if st.states["Property"].LastModificationTS == nil {
 		t.Error("watermark must never be NULL after a completed backfill — incremental sync refuses NULL cursors")
 	}
 	if !strings.Contains(fetcher.fetched[0], "ModificationTimestamp%20ge%20") {

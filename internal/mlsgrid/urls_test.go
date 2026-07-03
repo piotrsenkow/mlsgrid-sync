@@ -72,3 +72,31 @@ func TestQueryValidation(t *testing.T) {
 		t.Error("missing resource must error")
 	}
 }
+
+func TestQueryKeyFilter(t *testing.T) {
+	u, err := Query{
+		Resource:          "Property",
+		OriginatingSystem: "testmls",
+		KeyField:          "ListingKey",
+		Keys:              []string{"TST1", "TST2"},
+	}.URL("https://replay.example.test/v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := url.QueryUnescape(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "(ListingKey eq 'TST1' or ListingKey eq 'TST2')"
+	if !strings.Contains(decoded, want) {
+		t.Errorf("URL %q missing key filter %q", decoded, want)
+	}
+
+	if _, err := (Query{
+		Resource:          "Property",
+		OriginatingSystem: "testmls",
+		Keys:              []string{"TST1"},
+	}).URL("https://replay.example.test/v2"); err == nil {
+		t.Error("Keys without KeyField must error")
+	}
+}

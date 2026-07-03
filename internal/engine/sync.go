@@ -24,8 +24,10 @@ var ErrBackfillRequired = errors.New("incremental sync requires a completed back
 
 // SyncConfig parameterizes incremental replication.
 type SyncConfig struct {
-	BaseURL           string
-	Resource          string
+	BaseURL string
+	// Resources are synced in order each pass (e.g. Property, OpenHouse);
+	// each keeps its own cursor.
+	Resources         []string
 	OriginatingSystem string
 	PageSize          int
 	Expand            []string
@@ -34,7 +36,10 @@ type SyncConfig struct {
 	Interval time.Duration
 	// HealthAddr serves GET /healthz in daemon mode; empty disables it.
 	HealthAddr string
-	Log        *slog.Logger
+	// Limiter, when set, has its window counters restored from and
+	// persisted to the store, so restarts cannot launder rate usage.
+	Limiter *ratelimit.Limiter
+	Log     *slog.Logger
 }
 
 // SyncResult summarizes one catch-up pass.
@@ -52,6 +57,11 @@ type Sync struct {
 	store   store.Store
 	cfg     SyncConfig
 	now     func() time.Time
+
+	// reconciler, when set, runs during daemon passes once the last full
+	// reconcile is older than reconcileEvery.
+	reconciler     *Reconcile
+	reconcileEvery time.Duration
 }
 
 // NewSync wires an incremental sync.
@@ -62,41 +72,73 @@ func NewSync(f Fetcher, st store.Store, cfg SyncConfig) *Sync {
 	return &Sync{fetcher: f, store: st, cfg: cfg, now: time.Now}
 }
 
+// SetReconciler schedules periodic reconcile passes in daemon mode.
+func (s *Sync) SetReconciler(r *Reconcile, every time.Duration) {
+	s.reconciler = r
+	s.reconcileEvery = every
+}
+
 // queryURL builds the incremental feed URL. Unlike backfill it must NOT
 // filter MlgCanView: revoked records (MlgCanView=false) have to arrive so
 // they can be hard-deleted locally — a license obligation.
-func (s *Sync) queryURL(watermark *time.Time) (string, error) {
-	return mlsgrid.Query{
-		Resource:                s.cfg.Resource,
+func (s *Sync) queryURL(resource string, expandable bool, watermark *time.Time) (string, error) {
+	q := mlsgrid.Query{
+		Resource:                resource,
 		OriginatingSystem:       s.cfg.OriginatingSystem,
 		ModificationTimestampGE: watermark,
-		Expand:                  s.cfg.Expand,
 		Top:                     s.cfg.PageSize,
-	}.URL(s.cfg.BaseURL)
+	}
+	if expandable {
+		q.Expand = s.cfg.Expand
+	}
+	return q.URL(s.cfg.BaseURL)
 }
 
-// RunOnce performs one catch-up pass: everything modified at or after the
-// watermark, ge so boundary records re-process idempotently. The watermark
-// advances after each page's transaction commits.
+// RunOnce performs one catch-up pass over every configured resource:
+// everything modified at or after each resource's watermark, ge so boundary
+// records re-process idempotently. Watermarks advance after each page's
+// transaction commits.
 func (s *Sync) RunOnce(ctx context.Context) (SyncResult, error) {
+	var total SyncResult
+	bud := newBudget(s.cfg.Limiter, s.store, s.cfg.Log)
+	bud.restore(ctx)
+	for _, resource := range s.cfg.Resources {
+		res, err := s.runResource(ctx, resource, bud)
+		total.Pages += res.Pages
+		total.Upserted += res.Upserted
+		total.Deleted += res.Deleted
+		total.Skipped += res.Skipped
+		total.Events += res.Events
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+func (s *Sync) runResource(ctx context.Context, resource string, bud *budget) (SyncResult, error) {
 	var res SyncResult
 	log := s.cfg.Log
 
-	st, err := s.store.SyncState(ctx, s.cfg.Resource, s.cfg.OriginatingSystem)
+	ops, err := opsFor(resource)
+	if err != nil {
+		return res, err
+	}
+	st, err := s.store.SyncState(ctx, resource, s.cfg.OriginatingSystem)
 	if err != nil {
 		return res, fmt.Errorf("reading sync state: %w", err)
 	}
 	switch {
 	case st == nil:
-		return res, fmt.Errorf("%w (no cursor exists for %s/%s)", ErrBackfillRequired, s.cfg.Resource, s.cfg.OriginatingSystem)
+		return res, fmt.Errorf("%w (no cursor exists for %s/%s)", ErrBackfillRequired, resource, s.cfg.OriginatingSystem)
 	case st.BackfillCompletedAt == nil:
-		return res, fmt.Errorf("%w (a backfill is incomplete — re-run `backfill` to resume it)", ErrBackfillRequired)
+		return res, fmt.Errorf("%w (the %s backfill is incomplete — re-run `backfill` to resume it)", ErrBackfillRequired, resource)
 	case st.LastModificationTS == nil:
-		return res, fmt.Errorf("%w (cursor watermark is NULL)", ErrBackfillRequired)
+		return res, fmt.Errorf("%w (the %s cursor watermark is NULL)", ErrBackfillRequired, resource)
 	}
 	watermark := st.LastModificationTS
 
-	url, err := s.queryURL(watermark)
+	url, err := s.queryURL(resource, ops.expandable, watermark)
 	if err != nil {
 		return res, err
 	}
@@ -108,28 +150,28 @@ func (s *Sync) RunOnce(ctx context.Context) (SyncResult, error) {
 			var httpErr *mlsgrid.HTTPError
 			if errors.As(err, &httpErr) && httpErr.StatusCode == 400 && !rebuiltAfter400 {
 				rebuiltAfter400 = true
-				if url, err = s.queryURL(watermark); err != nil {
+				if url, err = s.queryURL(resource, ops.expandable, watermark); err != nil {
 					return res, err
 				}
 				log.Warn("page URL rejected (400) — rebuilt from watermark",
-					"watermark", timeOrNone(watermark))
+					"resource", resource, "watermark", timeOrNone(watermark))
 				continue
 			}
-			return res, fmt.Errorf("fetching page %d: %w", res.Pages+1, err)
+			return res, fmt.Errorf("fetching %s page %d: %w", resource, res.Pages+1, err)
 		}
 		rebuiltAfter400 = false
 		res.Pages++
 
-		viewable, revokedKeys := splitViewable(page.Records)
-		stats, err := s.store.UpsertProperties(ctx, viewable)
+		viewable, revokedKeys := ops.split(page.Records)
+		stats, err := ops.upsert(ctx, s.store, viewable)
 		if err != nil {
-			return res, fmt.Errorf("storing page %d: %w", res.Pages, err)
+			return res, fmt.Errorf("storing %s page %d: %w", resource, res.Pages, err)
 		}
 		if len(revokedKeys) > 0 {
-			// Hard delete + delisted event: removing revoked records is a
-			// license obligation, not housekeeping.
-			if _, err := s.store.DeleteProperties(ctx, revokedKeys); err != nil {
-				return res, fmt.Errorf("deleting revoked records: %w", err)
+			// Hard delete (+ delisted event for listings): removing revoked
+			// records is a license obligation, not housekeeping.
+			if _, err := ops.del(ctx, s.store, revokedKeys); err != nil {
+				return res, fmt.Errorf("deleting revoked %s records: %w", resource, err)
 			}
 			res.Deleted += len(revokedKeys)
 		}
@@ -139,17 +181,36 @@ func (s *Sync) RunOnce(ctx context.Context) (SyncResult, error) {
 
 		watermark = maxModificationTS(watermark, page.Records)
 		if err := s.store.SetSyncState(ctx, store.SyncState{
-			Resource:            s.cfg.Resource,
+			Resource:            resource,
 			OriginatingSystem:   s.cfg.OriginatingSystem,
 			LastModificationTS:  watermark,
 			BackfillCompletedAt: st.BackfillCompletedAt,
 			LastFullReconcileAt: st.LastFullReconcileAt,
 		}); err != nil {
-			return res, fmt.Errorf("persisting cursor after page %d: %w", res.Pages, err)
+			return res, fmt.Errorf("persisting %s cursor after page %d: %w", resource, res.Pages, err)
 		}
+		bud.persist(ctx)
 		url = page.NextLink
 	}
 	return res, nil
+}
+
+// reconcileDue reports whether any resource's last full reconcile is missing
+// or older than the configured cadence.
+func (s *Sync) reconcileDue(ctx context.Context) bool {
+	if s.reconciler == nil || s.reconcileEvery <= 0 {
+		return false
+	}
+	for _, resource := range s.cfg.Resources {
+		st, err := s.store.SyncState(ctx, resource, s.cfg.OriginatingSystem)
+		if err != nil || st == nil {
+			continue
+		}
+		if st.LastFullReconcileAt == nil || s.now().Sub(*st.LastFullReconcileAt) >= s.reconcileEvery {
+			return true
+		}
+	}
+	return false
 }
 
 // RunDaemon loops RunOnce at the configured interval until the context ends.
@@ -191,6 +252,17 @@ func (s *Sync) RunDaemon(ctx context.Context) error {
 			log.Info("sync pass complete",
 				"pages", res.Pages, "upserted", res.Upserted,
 				"deleted", res.Deleted, "events", res.Events)
+			if s.reconcileDue(ctx) {
+				log.Info("running scheduled reconcile pass")
+				if rerr := s.reconciler.Run(ctx); rerr != nil {
+					if errors.Is(rerr, ratelimit.ErrCircuitOpen) {
+						health.recordFailure(rerr)
+						return fmt.Errorf("halting daemon: %w", rerr)
+					}
+					health.recordFailure(rerr)
+					log.Error("reconcile pass failed — will retry when next due", "error", rerr)
+				}
+			}
 		}
 
 		jitter := time.Duration(rand.Int64N(int64(s.cfg.Interval)/10 + 1))

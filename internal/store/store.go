@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/piotrsenkow/mlsgrid-sync/internal/mlsgrid"
+	"github.com/piotrsenkow/mlsgrid-sync/internal/ratelimit"
 )
 
 // Store persists feed records and replication bookkeeping.
@@ -46,8 +47,22 @@ type Store interface {
 	// SetSyncState upserts the cursor row.
 	SetSyncState(ctx context.Context, s SyncState) error
 
-	// PropertyCount reports stored property rows (backfill --force guard).
-	PropertyCount(ctx context.Context) (int64, error)
+	// Count reports stored rows for a resource ("Property" or "OpenHouse");
+	// backfill's --force guard and status use it.
+	Count(ctx context.Context, resource string) (int64, error)
+
+	// ListKeys returns every stored key for a resource with its local
+	// modification timestamp — the local side of a reconcile diff.
+	ListKeys(ctx context.Context, resource string) (map[string]time.Time, error)
+
+	// RateBudget loads the persisted rate-limit window counters (zero Usage
+	// when none are stored). Persisting budgets means a crash-looping
+	// process cannot launder its rate-limit usage.
+	RateBudget(ctx context.Context) (ratelimit.Usage, error)
+
+	// SetRateBudget upserts the current window counters and opportunistically
+	// prunes windows older than 48h.
+	SetRateBudget(ctx context.Context, u ratelimit.Usage) error
 
 	// Close releases the underlying connections.
 	Close()

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/piotrsenkow/mlsgrid-sync/internal/mlsgrid"
+	"github.com/piotrsenkow/mlsgrid-sync/internal/ratelimit"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/store"
 )
 
@@ -41,7 +42,10 @@ type BackfillConfig struct {
 	MaxPages int
 	// Force allows starting over when data already exists.
 	Force bool
-	Log   *slog.Logger
+	// Limiter, when set, has its window counters restored from and
+	// persisted to the store, so restarts cannot launder rate usage.
+	Limiter *ratelimit.Limiter
+	Log     *slog.Logger
 }
 
 // Backfill runs the initial full import for one resource.
@@ -63,15 +67,18 @@ func NewBackfill(f Fetcher, st store.Store, cfg BackfillConfig) *Backfill {
 // queryURL builds the filtered feed URL from scratch. Backfill always filters
 // MlgCanView eq true; ge is used for the timestamp bound so boundary records
 // re-process idempotently instead of being skipped.
-func (b *Backfill) queryURL(since *time.Time) (string, error) {
-	return mlsgrid.Query{
+func (b *Backfill) queryURL(since *time.Time, expandable bool) (string, error) {
+	q := mlsgrid.Query{
 		Resource:                b.cfg.Resource,
 		OriginatingSystem:       b.cfg.OriginatingSystem,
 		MlgCanViewTrue:          true,
 		ModificationTimestampGE: since,
-		Expand:                  b.cfg.Expand,
 		Top:                     b.cfg.PageSize,
-	}.URL(b.cfg.BaseURL)
+	}
+	if expandable {
+		q.Expand = b.cfg.Expand
+	}
+	return q.URL(b.cfg.BaseURL)
 }
 
 // Run executes the backfill: fresh, resumed, or refused.
@@ -85,6 +92,13 @@ func (b *Backfill) queryURL(since *time.Time) (string, error) {
 func (b *Backfill) Run(ctx context.Context) error {
 	log := b.cfg.Log
 	started := b.now().UTC()
+
+	ops, err := opsFor(b.cfg.Resource)
+	if err != nil {
+		return err
+	}
+	bud := newBudget(b.cfg.Limiter, b.store, log)
+	bud.restore(ctx)
 
 	st, err := b.store.SyncState(ctx, b.cfg.Resource, b.cfg.OriginatingSystem)
 	if err != nil {
@@ -108,15 +122,15 @@ func (b *Backfill) Run(ctx context.Context) error {
 			return fmt.Errorf("backfill for %s/%s already completed at %s — run `sync` for updates, or re-run with --force to start over",
 				b.cfg.Resource, b.cfg.OriginatingSystem, st.BackfillCompletedAt.UTC().Format(time.RFC3339))
 		}
-		n, err := b.store.PropertyCount(ctx)
+		n, err := b.store.Count(ctx, b.cfg.Resource)
 		if err != nil {
-			return fmt.Errorf("counting stored properties: %w", err)
+			return fmt.Errorf("counting stored records: %w", err)
 		}
 		if n > 0 && !b.cfg.Force {
-			return fmt.Errorf("%d properties already stored and no backfill is in progress — use --force to re-import over them", n)
+			return fmt.Errorf("%d %s records already stored and no backfill is in progress — use --force to re-import over them", n, b.cfg.Resource)
 		}
 		watermark = b.cfg.Since
-		if url, err = b.queryURL(b.cfg.Since); err != nil {
+		if url, err = b.queryURL(b.cfg.Since, ops.expandable); err != nil {
 			return err
 		}
 	}
@@ -145,7 +159,7 @@ func (b *Backfill) Run(ctx context.Context) error {
 				// ordered by ModificationTimestamp, so everything before the
 				// watermark is already stored.
 				rebuiltAfter400 = true
-				if url, err = b.queryURL(watermark); err != nil {
+				if url, err = b.queryURL(watermark, ops.expandable); err != nil {
 					return err
 				}
 				log.Warn("page URL rejected (400) — rebuilt from watermark",
@@ -157,15 +171,15 @@ func (b *Backfill) Run(ctx context.Context) error {
 		rebuiltAfter400 = false
 		pages++
 
-		viewable, revokedKeys := splitViewable(page.Records)
-		stats, err := b.store.UpsertProperties(ctx, viewable)
+		viewable, revokedKeys := ops.split(page.Records)
+		stats, err := ops.upsert(ctx, b.store, viewable)
 		if err != nil {
 			return fmt.Errorf("storing page %d: %w", pages, err)
 		}
 		if len(revokedKeys) > 0 {
 			// The MlgCanView filter should exclude these, but a revocation
 			// mid-pagination can slip through; honor it either way.
-			if _, err := b.store.DeleteProperties(ctx, revokedKeys); err != nil {
+			if _, err := ops.del(ctx, b.store, revokedKeys); err != nil {
 				return fmt.Errorf("deleting revoked records on page %d: %w", pages, err)
 			}
 			deleted += len(revokedKeys)
@@ -188,6 +202,7 @@ func (b *Backfill) Run(ctx context.Context) error {
 		if err := b.store.SetSyncState(ctx, state); err != nil {
 			return fmt.Errorf("persisting cursor after page %d: %w", pages, err)
 		}
+		bud.persist(ctx)
 
 		log.Info("page stored",
 			"page", pages,
@@ -213,6 +228,7 @@ func (b *Backfill) Run(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("marking backfill complete: %w", err)
 	}
+	bud.persist(ctx)
 
 	log.Info("backfill complete",
 		"pages", pages,
@@ -223,20 +239,6 @@ func (b *Backfill) Run(ctx context.Context) error {
 		"duration", done.Sub(started).Round(time.Second).String(),
 		"watermark", timeOrNone(watermark))
 	return nil
-}
-
-// splitViewable partitions a page into storable records and revoked keys.
-func splitViewable(recs []mlsgrid.Record) (viewable []mlsgrid.Record, revokedKeys []string) {
-	for _, rec := range recs {
-		if rec.CanView() {
-			viewable = append(viewable, rec)
-			continue
-		}
-		if key := rec.ListingKey(); key != "" {
-			revokedKeys = append(revokedKeys, key)
-		}
-	}
-	return viewable, revokedKeys
 }
 
 // maxModificationTS advances the watermark over a page. The feed is ordered

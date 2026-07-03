@@ -26,6 +26,11 @@ type Query struct {
 	// re-processing boundary records is harmless, whereas gt against a
 	// truncated watermark silently skips same-instant records.
 	ModificationTimestampGE *time.Time
+	// KeyField + Keys add "(KeyField eq 'a' or KeyField eq 'b' ...)" — used
+	// by reconcile to re-fetch specific stale records. Callers chunk the key
+	// list (~50 per request) to keep URLs within practical limits.
+	KeyField string
+	Keys     []string
 	// Expand lists child resources (Media, Rooms, UnitTypes). Using $expand
 	// caps page size at 1000.
 	Expand []string
@@ -55,6 +60,16 @@ func (q Query) URL(base string) (string, error) {
 	}
 	if q.ModificationTimestampGE != nil {
 		filter += " and ModificationTimestamp ge " + q.ModificationTimestampGE.UTC().Format(timestampFormat)
+	}
+	if len(q.Keys) > 0 {
+		if q.KeyField == "" {
+			return "", fmt.Errorf("mlsgrid: Keys filter needs a KeyField")
+		}
+		parts := make([]string, len(q.Keys))
+		for i, k := range q.Keys {
+			parts[i] = fmt.Sprintf("%s eq '%s'", q.KeyField, k)
+		}
+		filter += " and (" + strings.Join(parts, " or ") + ")"
 	}
 
 	v := url.Values{}

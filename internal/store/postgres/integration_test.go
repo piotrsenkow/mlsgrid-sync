@@ -21,6 +21,7 @@ import (
 
 	"github.com/piotrsenkow/mlsgrid-sync/internal/fieldscope"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/mlsgrid"
+	"github.com/piotrsenkow/mlsgrid-sync/internal/ratelimit"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/store"
 )
 
@@ -199,7 +200,7 @@ func TestUpsertFixturePage(t *testing.T) {
 		t.Errorf("rooms = %d, want 1", roomCount)
 	}
 
-	n, err := s.PropertyCount(ctx)
+	n, err := s.Count(ctx, "Property")
 	if err != nil || n != 2 {
 		t.Errorf("PropertyCount = %d, %v", n, err)
 	}
@@ -541,5 +542,89 @@ func TestOpenHouses(t *testing.T) {
 	n, err := s.DeleteOpenHouses(ctx, []string{"TSTOH00000001"})
 	if err != nil || n != 1 {
 		t.Errorf("delete: %d, %v", n, err)
+	}
+}
+
+func TestCountAndListKeys(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t, "t_keys", Options{})
+	recs := loadFixtureRecords(t, "property_page1.json")
+	if _, err := s.UpsertProperties(ctx, recs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertOpenHouses(ctx, loadFixtureRecords(t, "openhouse_page.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	if n, err := s.Count(ctx, "Property"); err != nil || n != 2 {
+		t.Errorf("Count(Property) = %d, %v", n, err)
+	}
+	if n, err := s.Count(ctx, "OpenHouse"); err != nil || n != 1 {
+		t.Errorf("Count(OpenHouse) = %d, %v", n, err)
+	}
+	if _, err := s.Count(ctx, "Nope"); err == nil {
+		t.Error("unknown resource must error")
+	}
+
+	keys, err := s.ListKeys(ctx, "Property")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 6, 1, 12, 0, 0, 123e6, time.UTC)
+	if len(keys) != 2 || !keys["TST0000000001"].Equal(want) {
+		t.Errorf("ListKeys = %v", keys)
+	}
+	ohKeys, err := s.ListKeys(ctx, "OpenHouse")
+	if err != nil || len(ohKeys) != 1 {
+		t.Errorf("ListKeys(OpenHouse) = %v, %v", ohKeys, err)
+	}
+}
+
+func TestRateBudgetRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t, "t_budget", Options{})
+
+	// Empty table: zero usage, no error.
+	u, err := s.RateBudget(ctx)
+	if err != nil || !u.HourStart.IsZero() {
+		t.Fatalf("empty budget = %+v, %v", u, err)
+	}
+
+	// Windows must be current: SetRateBudget prunes anything older than 48h
+	// (which is also why fixed past dates cannot be used here).
+	hour := time.Now().UTC().Truncate(time.Hour)
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	if err := s.SetRateBudget(ctx, ratelimit.Usage{
+		HourStart: hour, HourRequests: 42, HourBytes: 1 << 20,
+		DayStart: day, DayRequests: 99,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Same window updated, not duplicated.
+	if err := s.SetRateBudget(ctx, ratelimit.Usage{
+		HourStart: hour, HourRequests: 50, HourBytes: 2 << 20,
+		DayStart: day, DayRequests: 120,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, err = s.RateBudget(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.HourRequests != 50 || u.HourBytes != 2<<20 || u.DayRequests != 120 {
+		t.Errorf("round trip = %+v", u)
+	}
+	if !u.HourStart.Equal(hour) || !u.DayStart.Equal(day) {
+		t.Errorf("window starts = %v / %v", u.HourStart, u.DayStart)
+	}
+
+	var rows int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM t_budget.rate_budget`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 2 {
+		t.Errorf("rate_budget rows = %d, want 2 (hour + day, upserted)", rows)
 	}
 }
