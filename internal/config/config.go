@@ -77,6 +77,8 @@ type Sync struct {
 	ReconcileEvery time.Duration `mapstructure:"reconcile_every"`
 	// PageSize is $top; the API caps it at 1000 when $expand is used.
 	PageSize int `mapstructure:"page_size"`
+	// HealthAddr is where the daemon serves GET /healthz; empty disables it.
+	HealthAddr string `mapstructure:"health_addr"`
 }
 
 // RateLimit defaults sit deliberately under MLS Grid's published caps
@@ -102,6 +104,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sync.interval", "5m")
 	v.SetDefault("sync.reconcile_every", "24h")
 	v.SetDefault("sync.page_size", 1000)
+	v.SetDefault("sync.health_addr", "127.0.0.1:8322")
 	v.SetDefault("ratelimit.rps", 1.8)
 	v.SetDefault("ratelimit.hourly", 6800)
 	v.SetDefault("ratelimit.daily", 38000)

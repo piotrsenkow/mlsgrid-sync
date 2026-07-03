@@ -1,0 +1,44 @@
+# systemd unit for the incremental replication daemon.
+#
+# Install:
+#   cp deploy/mlsgrid-sync.service /etc/systemd/system/
+#   mkdir -p /etc/mlsgrid-sync && $EDITOR /etc/mlsgrid-sync/env   # tokens + DB URL
+#   systemctl daemon-reload && systemctl enable --now mlsgrid-sync
+#
+# The env file provides MLSGRID_DATABASE_URL and the profile's token variable
+# (whatever token_env names in your config). chmod 600 it — it holds secrets.
+#
+# The daemon never exits when the feed is caught up, so Restart=on-failure
+# only fires on real failures. The start limit stops a crash loop: if the
+# daemon halts because the rate-limit circuit opened (token suspended),
+# restarting it every 30s would keep poking the API and extend the
+# suspension. Investigate before `systemctl reset-failed mlsgrid-sync`.
+
+[Unit]
+Description=mlsgrid-sync incremental MLS replication
+Documentation=https://github.com/piotrsenkow/mlsgrid-sync
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mlsgrid-sync sync --daemon --config /etc/mlsgrid-sync/config.yaml
+EnvironmentFile=/etc/mlsgrid-sync/env
+Restart=on-failure
+RestartSec=30
+User=mlsgrid
+Group=mlsgrid
+
+# Hardening — the daemon only needs the network and its config.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

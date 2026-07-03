@@ -71,15 +71,19 @@ func (f *fakeStore) PropertyCount(ctx context.Context) (int64, error) { return f
 
 // fakeFetcher serves canned pages (or errors) by URL.
 type fakeFetcher struct {
-	pages   map[string]*mlsgrid.PageResult
-	errs    map[string]error
-	fetched []string
+	pages      map[string]*mlsgrid.PageResult
+	errs       map[string]error // fire once, like a transient stale link
+	stickyErrs map[string]error // fire on every fetch
+	fetched    []string
 }
 
 func (f *fakeFetcher) Fetch(ctx context.Context, url string) (*mlsgrid.PageResult, error) {
 	f.fetched = append(f.fetched, url)
+	if err, ok := f.stickyErrs[url]; ok {
+		return nil, err
+	}
 	if err, ok := f.errs[url]; ok {
-		delete(f.errs, url) // errors fire once, like a transient stale link
+		delete(f.errs, url)
 		return nil, err
 	}
 	if page, ok := f.pages[url]; ok {

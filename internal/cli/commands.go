@@ -1,18 +1,56 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"runtime/debug"
+	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/piotrsenkow/mlsgrid-sync/internal/config"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/engine"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/fieldscope"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/mlsgrid"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/ratelimit"
+	"github.com/piotrsenkow/mlsgrid-sync/internal/store"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/store/postgres"
 )
+
+// profileDeps opens the store and API pager for a profile-scoped command.
+// The caller owns closing the returned store.
+func profileDeps(ctx context.Context, cmd *cobra.Command) (*config.Profile, *postgres.Store, *mlsgrid.Pager, error) {
+	p, err := selectedProfile(cmd)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	token, err := p.Token()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	aliases, err := fieldscope.Load(p.FieldAliases)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	st, err := postgres.New(ctx, cfg.Database.URL, postgres.Options{
+		Schema:        cfg.Database.Schema,
+		Aliases:       aliases,
+		MediaDownload: p.Media.Mode == "download",
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	limiter := ratelimit.New(ratelimit.Config{
+		RPS:         cfg.RateLimit.RPS,
+		Hourly:      cfg.RateLimit.Hourly,
+		Daily:       cfg.RateLimit.Daily,
+		BytesHourly: int64(cfg.RateLimit.BytesHourlyMB) * 1024 * 1024,
+	}, nil)
+	pager := mlsgrid.NewPager(mlsgrid.NewClient(token), limiter, nil)
+	return p, st, pager, nil
+}
 
 // version is set via -ldflags "-X ...cli.version=v0.1.0" by goreleaser;
 // falls back to VCS info for `go install` builds.
@@ -56,14 +94,6 @@ Combined with --max-pages this keeps a trial run to a handful of requests —
 important when the token's rate budget is shared with another consumer.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		p, err := selectedProfile(cmd)
-		if err != nil {
-			return err
-		}
-		token, err := p.Token()
-		if err != nil {
-			return err
-		}
 		force, _ := cmd.Flags().GetBool("force")
 		noExpand, _ := cmd.Flags().GetBool("no-expand")
 		sinceStr, _ := cmd.Flags().GetString("since")
@@ -73,27 +103,11 @@ important when the token's rate budget is shared with another consumer.`,
 			return err
 		}
 
-		aliases, err := fieldscope.Load(p.FieldAliases)
-		if err != nil {
-			return err
-		}
-		st, err := postgres.New(ctx, cfg.Database.URL, postgres.Options{
-			Schema:        cfg.Database.Schema,
-			Aliases:       aliases,
-			MediaDownload: p.Media.Mode == "download",
-		})
+		p, st, pager, err := profileDeps(ctx, cmd)
 		if err != nil {
 			return err
 		}
 		defer st.Close()
-
-		limiter := ratelimit.New(ratelimit.Config{
-			RPS:         cfg.RateLimit.RPS,
-			Hourly:      cfg.RateLimit.Hourly,
-			Daily:       cfg.RateLimit.Daily,
-			BytesHourly: int64(cfg.RateLimit.BytesHourlyMB) * 1024 * 1024,
-		}, nil)
-		pager := mlsgrid.NewPager(mlsgrid.NewClient(token), limiter, nil)
 
 		expand := []string{"Media", "Rooms", "UnitTypes"}
 		if noExpand {
@@ -151,7 +165,34 @@ mean "fetch everything".`,
 		if once == daemon {
 			return fmt.Errorf("exactly one of --once or --daemon is required")
 		}
-		return notImplemented("M5")
+
+		ctx := cmd.Context()
+		p, st, pager, err := profileDeps(ctx, cmd)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+
+		s := engine.NewSync(pager, st, engine.SyncConfig{
+			BaseURL:           mlsgrid.DefaultBaseURL,
+			Resource:          "Property",
+			OriginatingSystem: p.OriginatingSystem,
+			PageSize:          cfg.Sync.PageSize,
+			Expand:            []string{"Media", "Rooms", "UnitTypes"},
+			Interval:          cfg.Sync.Interval,
+			HealthAddr:        cfg.Sync.HealthAddr,
+		})
+		if once {
+			res, err := s.RunOnce(ctx)
+			if err != nil {
+				return err
+			}
+			slog.Info("caught up",
+				"pages", res.Pages, "upserted", res.Upserted,
+				"deleted", res.Deleted, "events", res.Events, "skipped", res.Skipped)
+			return nil
+		}
+		return s.RunDaemon(ctx)
 	},
 }
 
@@ -184,10 +225,73 @@ var mediaRetryCmd = &cobra.Command{
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show sync cursors, record counts, and rate-budget usage",
+	Short: "Show sync cursors and record counts",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return notImplemented("M5")
+		ctx := cmd.Context()
+		st, err := postgres.New(ctx, cfg.Database.URL, postgres.Options{Schema: cfg.Database.Schema})
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+
+		version, err := st.ContractVersion(ctx)
+		if err != nil {
+			return err
+		}
+		count, err := st.PropertyCount(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("schema:            %s (contract %s)\n", cfg.Database.Schema, version)
+		fmt.Printf("properties stored: %d\n", count)
+
+		names := make([]string, 0, len(cfg.Profiles))
+		for n := range cfg.Profiles {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			p := cfg.Profiles[name]
+			resources := p.Resources
+			if len(resources) == 0 {
+				resources = []string{"Property"}
+			}
+			for _, r := range resources {
+				state, err := st.SyncState(ctx, r, p.OriginatingSystem)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("\nprofile %s — %s/%s\n", name, r, p.OriginatingSystem)
+				if state == nil {
+					fmt.Println("  cursor:   none (backfill has not run)")
+					continue
+				}
+				fmt.Printf("  watermark: %s\n", fmtTime(state.LastModificationTS))
+				fmt.Printf("  backfill:  %s\n", fmtCompletion(state))
+				if state.LastFullReconcileAt != nil {
+					fmt.Printf("  reconciled: %s\n", fmtTime(state.LastFullReconcileAt))
+				}
+			}
+		}
+		return nil
 	},
+}
+
+func fmtTime(t *time.Time) string {
+	if t == nil {
+		return "none"
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func fmtCompletion(s *store.SyncState) string {
+	if s.BackfillCompletedAt != nil {
+		return "completed " + fmtTime(s.BackfillCompletedAt)
+	}
+	if s.InProgressURL != nil {
+		return "in progress (re-run `backfill` to resume)"
+	}
+	return "not completed"
 }
 
 var versionCmd = &cobra.Command{

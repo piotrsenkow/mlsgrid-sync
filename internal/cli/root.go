@@ -3,9 +3,12 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -41,10 +44,14 @@ for every feed you sync. See docs/compliance.md.`,
 	},
 }
 
-// Execute runs the root command.
+// Execute runs the root command. SIGINT/SIGTERM cancel the command context,
+// letting long-running commands (backfill, sync --daemon) finish their
+// current page cleanly before exiting.
 func Execute() error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	return rootCmd.Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return rootCmd.ExecuteContext(ctx)
 }
 
 func init() {
