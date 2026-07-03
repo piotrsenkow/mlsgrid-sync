@@ -102,6 +102,20 @@ func (f *fakeStore) ListKeys(ctx context.Context, resource string) (map[string]t
 	return f.localKeys, nil
 }
 
+// Media-queue methods: the engine never touches these; the media downloader
+// has its own fake in internal/media.
+func (f *fakeStore) PendingMedia(ctx context.Context, afterKey string, limit int) ([]store.MediaItem, error) {
+	return nil, nil
+}
+func (f *fakeStore) MarkMediaDownloaded(ctx context.Context, mediaKey, localPath, contentType string, bytes int64) error {
+	return nil
+}
+func (f *fakeStore) MarkMediaFailed(ctx context.Context, mediaKey string, permanent bool) error {
+	return nil
+}
+func (f *fakeStore) RequeueFailedMedia(ctx context.Context) (int64, error)    { return 0, nil }
+func (f *fakeStore) MediaStats(ctx context.Context) (map[string]int64, error) { return nil, nil }
+
 func (f *fakeStore) RateBudget(ctx context.Context) (ratelimit.Usage, error) {
 	f.budgetReads++
 	return f.budget, nil

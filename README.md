@@ -42,8 +42,21 @@ mlsgrid-sync sync --daemon                 # continuous replication
 | `backfill` | Initial full import; `--force` to redo, `--no-expand` for a fast column-only pass |
 | `sync --once` / `--daemon` | Incremental replication from the persisted cursor |
 | `reconcile` | Full-feed key sweep; purges records deleted while offline |
+| `media download` | Drain queued photos to the configured sink; `--max-files` bounds a run |
 | `media retry` | Re-queue failed media downloads |
-| `status` | Cursors, record counts, rate-budget usage |
+| `status` | Cursors, record counts, media queue, rate-budget usage |
+
+## Media
+
+The default mode (`metadata-only`) stores media rows — URLs, captions, dimensions — without fetching files. Setting `media.mode: download` in a profile queues every discovered photo (`storage_status='pending'`) and `media download` drains the queue into a sink: a local directory or any S3-compatible bucket (AWS, MinIO, Cloudflare R2 — S3 credentials come from the standard AWS environment variables).
+
+Rules the downloader enforces for you:
+
+- Every request sends `User-Agent: <your access token>` — mandatory for MLS Grid media since 2026-06-01.
+- Downloads count against the same hourly byte budget as the feed, so a big backlog just proceeds at your configured limits. Use `--max-files` to bound a run when the token is shared.
+- MediaKeys are immutable, so a downloaded key is never fetched twice; replaced photos arrive as new keys.
+- A dead URL never blocks the queue: it is retried on later runs and parked as `failed` after 3 attempts (`media retry` re-queues).
+- When a revoked listing is hard-deleted, its downloaded files are removed from the sink too.
 
 ## Design notes
 

@@ -22,9 +22,10 @@ type Store struct {
 	aliases *fieldscope.AliasMap
 
 	// mediaStatus is the storage_status newly-discovered media rows get:
-	// "pending" queues them for download (M7), "skipped" records
-	// metadata-only mode.
-	mediaStatus string
+	// "pending" queues them for download, "skipped" records metadata-only
+	// mode.
+	mediaStatus  string
+	mediaRemover func(context.Context, []string)
 
 	// SQL is generated once from the field maps so column order has a single
 	// source of truth.
@@ -46,6 +47,12 @@ type Options struct {
 	Aliases *fieldscope.AliasMap
 	// MediaDownload marks new media rows pending download instead of skipped.
 	MediaDownload bool
+	// MediaRemover, when set, receives the local_path values of downloaded
+	// files whose rows are hard-deleted, so sink files die with the record —
+	// part of the MlgCanView=false license obligation. Called after the
+	// deleting transaction commits; it must handle its own errors (best
+	// effort — a failed removal must not resurrect the row).
+	MediaRemover func(ctx context.Context, localPaths []string)
 }
 
 // New connects to databaseURL and returns a ready store. It does not migrate;
@@ -71,10 +78,11 @@ func NewWithPool(pool *pgxpool.Pool, opts Options) *Store {
 		opts.Schema = "mlsgrid"
 	}
 	s := &Store{
-		pool:        pool,
-		schema:      opts.Schema,
-		aliases:     opts.Aliases,
-		mediaStatus: "skipped",
+		pool:         pool,
+		schema:       opts.Schema,
+		aliases:      opts.Aliases,
+		mediaStatus:  "skipped",
+		mediaRemover: opts.MediaRemover,
 	}
 	if opts.MediaDownload {
 		s.mediaStatus = "pending"

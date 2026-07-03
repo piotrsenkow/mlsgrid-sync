@@ -247,12 +247,38 @@ func drainBatch(ctx context.Context, tx pgx.Tx, b *pgx.Batch) error {
 
 // DeleteProperties hard-deletes listings (children cascade) and records a
 // delisted event per row that existed. Called for MlgCanView=false records —
-// removing revoked records is a license obligation.
+// removing revoked records is a license obligation, and it extends to any
+// downloaded media files: their paths are collected before the rows cascade
+// away and passed to the configured remover once the delete commits.
 func (s *Store) DeleteProperties(ctx context.Context, listingKeys []string) (int64, error) {
 	if len(listingKeys) == 0 {
 		return 0, nil
 	}
-	tag, err := s.pool.Exec(ctx, fmt.Sprintf(
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var paths []string
+	if s.mediaRemover != nil {
+		rows, err := tx.Query(ctx, fmt.Sprintf(
+			`SELECT local_path FROM %s
+			 WHERE listing_key = ANY($1) AND local_path IS NOT NULL`,
+			s.table("media")), listingKeys)
+		if err != nil {
+			return 0, err
+		}
+		var p string
+		if _, err := pgx.ForEachRow(rows, []any{&p}, func() error {
+			paths = append(paths, p)
+			return nil
+		}); err != nil {
+			return 0, err
+		}
+	}
+
+	tag, err := tx.Exec(ctx, fmt.Sprintf(
 		`WITH del AS (
 		     DELETE FROM %s WHERE listing_key = ANY($1)
 		     RETURNING listing_key, standard_status
@@ -262,6 +288,12 @@ func (s *Store) DeleteProperties(ctx context.Context, listingKeys []string) (int
 		s.table("property"), s.table("listing_event")), listingKeys)
 	if err != nil {
 		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	if len(paths) > 0 {
+		s.mediaRemover(ctx, paths)
 	}
 	return tag.RowsAffected(), nil
 }

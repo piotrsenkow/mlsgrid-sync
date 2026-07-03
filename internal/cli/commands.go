@@ -13,6 +13,7 @@ import (
 	"github.com/piotrsenkow/mlsgrid-sync/internal/config"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/engine"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/fieldscope"
+	"github.com/piotrsenkow/mlsgrid-sync/internal/media"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/mlsgrid"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/ratelimit"
 	"github.com/piotrsenkow/mlsgrid-sync/internal/store"
@@ -26,6 +27,8 @@ type deps struct {
 	store   *postgres.Store
 	pager   *mlsgrid.Pager
 	limiter *ratelimit.Limiter
+	// sink is non-nil when the profile's media mode is download.
+	sink media.Sink
 }
 
 // resources returns the profile's configured resources (default Property).
@@ -49,10 +52,28 @@ func profileDeps(ctx context.Context, cmd *cobra.Command) (*deps, error) {
 	if err != nil {
 		return nil, err
 	}
+	var sink media.Sink
+	var remover func(context.Context, []string)
+	if p.Media.Mode == "download" {
+		if sink, err = buildSink(ctx, p.Media.Sink); err != nil {
+			return nil, err
+		}
+		// Hard-deleting a listing must take its downloaded files with it
+		// (license obligation). Best effort by design: the rows are already
+		// gone, so a failed removal is logged, not resurrected.
+		remover = func(ctx context.Context, paths []string) {
+			for _, path := range paths {
+				if err := sink.Remove(ctx, path); err != nil {
+					slog.Warn("removing media file for deleted listing", "path", path, "error", err)
+				}
+			}
+		}
+	}
 	st, err := postgres.New(ctx, cfg.Database.URL, postgres.Options{
 		Schema:        cfg.Database.Schema,
 		Aliases:       aliases,
 		MediaDownload: p.Media.Mode == "download",
+		MediaRemover:  remover,
 	})
 	if err != nil {
 		return nil, err
@@ -64,7 +85,25 @@ func profileDeps(ctx context.Context, cmd *cobra.Command) (*deps, error) {
 		BytesHourly: int64(cfg.RateLimit.BytesHourlyMB) * 1024 * 1024,
 	}, nil)
 	pager := mlsgrid.NewPager(mlsgrid.NewClient(token), limiter, nil)
-	return &deps{profile: p, store: st, pager: pager, limiter: limiter}, nil
+	return &deps{profile: p, store: st, pager: pager, limiter: limiter, sink: sink}, nil
+}
+
+// buildSink maps sink config to an implementation. Config validation has
+// already guaranteed the per-type required fields.
+func buildSink(ctx context.Context, s config.Sink) (media.Sink, error) {
+	switch s.Type {
+	case "disk":
+		return media.NewDiskSink(s.Path)
+	case "s3":
+		return media.NewS3Sink(ctx, media.S3Options{
+			Endpoint: s.Endpoint,
+			Bucket:   s.Bucket,
+			Prefix:   s.Prefix,
+			Region:   s.Region,
+		})
+	default:
+		return nil, fmt.Errorf("media.sink.type must be disk or s3, got %q", s.Type)
+	}
 }
 
 // version is set via -ldflags "-X ...cli.version=v0.1.0" by goreleaser;
@@ -265,11 +304,75 @@ var mediaCmd = &cobra.Command{
 	Short: "Media download management",
 }
 
+var mediaDownloadCmd = &cobra.Command{
+	Use:   "download",
+	Short: "Download queued media files (storage_status=pending) to the configured sink",
+	Long: `Drains the pending-media queue through a bounded worker pool. Downloads
+carry the mandatory User-Agent access-token header and count against the same
+hourly byte budget as the feed, so a large backlog simply proceeds at the
+configured rate limits.
+
+Requires the profile to set media.mode: download with a configured sink.
+Individual URL failures never block the queue: a file is retried on later
+runs and parks as 'failed' after 3 attempts (see 'media retry').
+
+Use --max-files to bound a run when the token's rate budget is shared with
+another consumer.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
+		maxFiles, _ := cmd.Flags().GetInt("max-files")
+		workers, _ := cmd.Flags().GetInt("workers")
+
+		d, err := profileDeps(ctx, cmd)
+		if err != nil {
+			return err
+		}
+		defer d.store.Close()
+		if d.sink == nil {
+			return fmt.Errorf("profile has media.mode=%q — set media.mode: download and configure media.sink",
+				orDefault(d.profile.Media.Mode, "metadata-only"))
+		}
+		token, err := d.profile.Token()
+		if err != nil {
+			return err
+		}
+		stats, err := media.NewDownloader(d.store, media.Config{
+			Token:    token,
+			Sink:     d.sink,
+			Workers:  workers,
+			MaxFiles: maxFiles,
+			Limiter:  d.limiter,
+		}).Run(ctx)
+		slog.Info("media download finished",
+			"downloaded", stats.Downloaded, "failed", stats.Failed,
+			"mb", fmt.Sprintf("%.1f", float64(stats.Bytes)/(1024*1024)))
+		return err
+	},
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
 var mediaRetryCmd = &cobra.Command{
 	Use:   "retry",
 	Short: "Re-queue media rows in storage_status=failed for download",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return notImplemented("M7")
+		ctx := cmd.Context()
+		st, err := postgres.New(ctx, cfg.Database.URL, postgres.Options{Schema: cfg.Database.Schema})
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		n, err := st.RequeueFailedMedia(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("re-queued %d failed media rows (run `media download` to retry them)\n", n)
+		return nil
 	},
 }
 
@@ -320,6 +423,15 @@ var statusCmd = &cobra.Command{
 				fmt.Printf("  backfill:   %s\n", fmtCompletion(state))
 				fmt.Printf("  reconciled: %s\n", fmtTime(state.LastFullReconcileAt))
 			}
+		}
+
+		media, err := st.MediaStats(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\nmedia\n")
+		for _, status := range []string{"pending", "downloaded", "failed", "skipped"} {
+			fmt.Printf("  %-11s %d\n", status+":", media[status])
 		}
 
 		usage, err := st.RateBudget(ctx)
@@ -381,6 +493,8 @@ func init() {
 	reconcileCmd.Flags().Bool("include-missing", false, "also import remote records absent locally (turns a bounded import into a fuller one)")
 	syncCmd.Flags().Bool("once", false, "run one catch-up pass and exit 0")
 	syncCmd.Flags().Bool("daemon", false, "run continuously at sync.interval")
-	mediaCmd.AddCommand(mediaRetryCmd)
+	mediaDownloadCmd.Flags().Int("max-files", 0, "stop after attempting N files (0 = drain the queue)")
+	mediaDownloadCmd.Flags().Int("workers", 4, "concurrent downloads (the rate limiter still governs overall pace)")
+	mediaCmd.AddCommand(mediaDownloadCmd, mediaRetryCmd)
 	rootCmd.AddCommand(initDBCmd, backfillCmd, syncCmd, reconcileCmd, mediaCmd, statusCmd, versionCmd)
 }

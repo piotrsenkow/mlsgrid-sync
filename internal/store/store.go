@@ -55,6 +55,29 @@ type Store interface {
 	// modification timestamp — the local side of a reconcile diff.
 	ListKeys(ctx context.Context, resource string) (map[string]time.Time, error)
 
+	// PendingMedia returns up to limit media rows with
+	// storage_status='pending', ordered by media_key, strictly after afterKey
+	// ("" starts from the beginning). Keyset iteration lets one download pass
+	// visit each queued row exactly once even as failed attempts flip rows
+	// back to pending behind the cursor.
+	PendingMedia(ctx context.Context, afterKey string, limit int) ([]MediaItem, error)
+
+	// MarkMediaDownloaded records a completed download. Because MediaKeys are
+	// immutable, a downloaded row is never queued again.
+	MarkMediaDownloaded(ctx context.Context, mediaKey, localPath, contentType string, bytes int64) error
+
+	// MarkMediaFailed increments failure_count. With permanent the row moves
+	// to storage_status='failed' (out of the queue until RequeueFailedMedia);
+	// otherwise it stays pending for the next pass.
+	MarkMediaFailed(ctx context.Context, mediaKey string, permanent bool) error
+
+	// RequeueFailedMedia flips failed rows back to pending with a reset
+	// failure_count, returning how many were requeued (`media retry`).
+	RequeueFailedMedia(ctx context.Context) (int64, error)
+
+	// MediaStats counts media rows by storage_status.
+	MediaStats(ctx context.Context) (map[string]int64, error)
+
 	// RateBudget loads the persisted rate-limit window counters (zero Usage
 	// when none are stored). Persisting budgets means a crash-looping
 	// process cannot launder its rate-limit usage.
@@ -66,6 +89,14 @@ type Store interface {
 
 	// Close releases the underlying connections.
 	Close()
+}
+
+// MediaItem is one media row in the download queue.
+type MediaItem struct {
+	MediaKey     string
+	ListingKey   string
+	MediaURL     string
+	FailureCount int
 }
 
 // UpsertStats summarizes one page write.

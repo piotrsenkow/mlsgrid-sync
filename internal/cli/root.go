@@ -59,12 +59,6 @@ func init() {
 	rootCmd.PersistentFlags().StringP("profile", "p", "", "named MLS profile from config to operate on (required when config defines more than one)")
 }
 
-// notImplemented returns the standard error for commands whose milestone has
-// not been built yet. The milestone reference keeps expectations honest.
-func notImplemented(milestone string) error {
-	return fmt.Errorf("not implemented yet — scheduled for %s (see docs/ROADMAP.md)", milestone)
-}
-
 // selectedProfile resolves the --profile flag against loaded config.
 func selectedProfile(cmd *cobra.Command) (*config.Profile, error) {
 	name, _ := cmd.Flags().GetString("profile")

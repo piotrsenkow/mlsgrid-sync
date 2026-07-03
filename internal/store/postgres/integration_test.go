@@ -628,3 +628,113 @@ func TestRateBudgetRoundTrip(t *testing.T) {
 		t.Errorf("rate_budget rows = %d, want 2 (hour + day, upserted)", rows)
 	}
 }
+
+func TestMediaQueueLifecycle(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t, "t_mediaq", Options{MediaDownload: true})
+	if _, err := s.UpsertProperties(ctx, loadFixtureRecords(t, "property_page1.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	// MediaDownload mode queues discovered media as pending.
+	first, err := s.PendingMedia(ctx, "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].MediaKey != "TSTMEDIA0001" || first[0].MediaURL == "" {
+		t.Fatalf("first claim = %+v", first)
+	}
+	rest, err := s.PendingMedia(ctx, first[0].MediaKey, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 1 || rest[0].MediaKey != "TSTMEDIA0002" {
+		t.Fatalf("keyset continuation = %+v", rest)
+	}
+
+	// Downloaded rows leave the queue for good.
+	if err := s.MarkMediaDownloaded(ctx, "TSTMEDIA0001", "ab/cd/TSTMEDIA0001.jpg", "image/jpeg", 8); err != nil {
+		t.Fatal(err)
+	}
+	// Transient failure keeps the row pending with a bumped count.
+	if err := s.MarkMediaFailed(ctx, "TSTMEDIA0002", false); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.PendingMedia(ctx, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].MediaKey != "TSTMEDIA0002" || pending[0].FailureCount != 1 {
+		t.Fatalf("after download+transient failure = %+v", pending)
+	}
+
+	// Permanent failure parks the row; retry re-queues it fresh.
+	if err := s.MarkMediaFailed(ctx, "TSTMEDIA0002", true); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := s.MediaStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats["downloaded"] != 1 || stats["failed"] != 1 || stats["pending"] != 0 {
+		t.Fatalf("stats = %v", stats)
+	}
+	n, err := s.RequeueFailedMedia(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("requeued = %d", n)
+	}
+	pending, err = s.PendingMedia(ctx, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].FailureCount != 0 {
+		t.Fatalf("after retry = %+v", pending)
+	}
+
+	// MediaKey immutability: re-syncing the parent must not reset download
+	// state — a downloaded key is never fetched again.
+	if _, err := s.UpsertProperties(ctx, loadFixtureRecords(t, "property_page1.json")); err != nil {
+		t.Fatal(err)
+	}
+	stats, err = s.MediaStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats["downloaded"] != 1 || stats["pending"] != 1 {
+		t.Fatalf("stats after re-upsert = %v, download state must survive", stats)
+	}
+}
+
+func TestDeletePropertiesRemovesMediaFiles(t *testing.T) {
+	ctx := context.Background()
+	var removed []string
+	s := newTestStore(t, "t_mediadel", Options{
+		MediaDownload: true,
+		MediaRemover:  func(_ context.Context, paths []string) { removed = append(removed, paths...) },
+	})
+	if _, err := s.UpsertProperties(ctx, loadFixtureRecords(t, "property_page1.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkMediaDownloaded(ctx, "TSTMEDIA0001", "ab/cd/TSTMEDIA0001.jpg", "image/jpeg", 8); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.DeleteProperties(ctx, []string{"TST0000000001"}); err != nil {
+		t.Fatal(err)
+	}
+	// Only the downloaded file (local_path set) needs removing; the still-
+	// pending sibling never hit the sink.
+	if len(removed) != 1 || removed[0] != "ab/cd/TSTMEDIA0001.jpg" {
+		t.Fatalf("removed = %v, want the downloaded file's path — deleting a revoked listing must take its files along", removed)
+	}
+	stats, err := s.MediaStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total := stats["pending"] + stats["downloaded"] + stats["failed"] + stats["skipped"]; total != 0 {
+		t.Fatalf("media rows remain after delete: %v", stats)
+	}
+}
